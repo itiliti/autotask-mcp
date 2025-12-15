@@ -122,7 +122,6 @@ export class AutotaskToolHandler {
           ...TEST_ANNOTATIONS,
         },
       },
-```typescript
       {
         name: 'autotask_get_default_resource',
         description: 'Get the default resource ID (API user). This resource is used as default when a resource is required but not specified. Shows cached information about the API user.',
@@ -627,6 +626,7 @@ export class AutotaskToolHandler {
           break;
         }
 
+```typescript
         case 'autotask_get_rate_limit_status': {
           const status = this.autotaskService.getRateLimiterStatus();
           result = status;
