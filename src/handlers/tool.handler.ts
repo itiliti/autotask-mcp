@@ -93,6 +93,7 @@ export class AutotaskToolHandler {
     this.logger.debug('Listing available Autotask tools');
 
     const tools: McpTool[] = [
+```typescript
       // Server information
       {
         name: 'autotask_get_build_info',
@@ -136,7 +137,6 @@ export class AutotaskToolHandler {
         },
       },
 ```
-
       // Connection testing
       {
         name: 'autotask_test_connection',
@@ -618,6 +618,7 @@ export class AutotaskToolHandler {
       let message: string;
 
       switch (name) {
+```typescript
         case 'autotask_get_build_info': {
           const { getBuildInfo } = await import('../utils/build-info.js');
           const buildInfo = getBuildInfo();
@@ -626,7 +627,6 @@ export class AutotaskToolHandler {
           break;
         }
 
-```typescript
         case 'autotask_get_rate_limit_status': {
           const status = this.autotaskService.getRateLimiterStatus();
           result = status;
@@ -657,7 +657,7 @@ export class AutotaskToolHandler {
           ].filter(Boolean).join('\n');
           break;
         }
-```typescript
+
         case 'autotask_get_default_resource': {
           const resourceId = this.autotaskService.getDefaultResourceId();
           const cacheInfo = this.autotaskService.getApiUserCache();

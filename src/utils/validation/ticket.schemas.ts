@@ -33,10 +33,12 @@ import {
 export const SearchTicketsInputSchema = z
   .object({
     searchTerm: SearchTermSchema,
+```typescript
     companyID: NonNegativeIdSchema.optional().describe('Company ID (0 = default/system company)'),
     status: PositiveIdSchema.describe(
       'Ticket status ID. Open statuses: 1=New, 2=In Progress, 7=Waiting Customer, 8=Waiting Vendor, 9=Escalated. Closed statuses: 5=Complete, 20=Inactive, 21=Cancelled, 24=Rejected, 26=Internal Rejected, 27=Client Rejected. Omit to search only open tickets.'
     ).optional(),
+```
     assignedResourceID: PositiveIdSchema.optional(),
     unassigned: BooleanFilterSchema,
     createDateFrom: ISODateTimeSchema.optional().describe(
