@@ -107,6 +107,7 @@ export class AutotaskToolHandler {
           ...TEST_ANNOTATIONS,
         },
       },
+```typescript
       {
         name: 'autotask_get_rate_limit_status',
         description: 'Get current API rate limit status including usage thresholds, active requests, and queue depth. Shows API usage percentage and thread management status.',
@@ -133,6 +134,7 @@ export class AutotaskToolHandler {
           ...TEST_ANNOTATIONS,
         },
       },
+```
 
       // Connection testing
       {
@@ -623,10 +625,11 @@ export class AutotaskToolHandler {
           break;
         }
 
+```typescript
         case 'autotask_get_rate_limit_status': {
           const status = this.autotaskService.getRateLimiterStatus();
           result = status;
-          
+
           const warnings: string[] = [];
           if (status.isBlocked) {
             warnings.push(`🚫 BLOCKED: Less than 100 API calls remaining`);
@@ -637,11 +640,11 @@ export class AutotaskToolHandler {
           if (status.queuedRequests > 0) {
             warnings.push(`${status.queuedRequests} requests queued`);
           }
-          
-          const thresholdText = status.threshold 
+
+          const thresholdText = status.threshold
             ? `${status.threshold.requestCount}/${status.threshold.requestLimit} (${status.threshold.percentageUsed.toFixed(1)}%)`
             : 'Not yet checked';
-          
+
           message = [
             `Rate Limiter Status:`,
             `- Active requests: ${status.activeRequests}/${status.maxConcurrentRequests}`,
@@ -653,26 +656,7 @@ export class AutotaskToolHandler {
           ].filter(Boolean).join('\n');
           break;
         }
-
-        case 'autotask_get_default_resource': {
-          const resourceId = this.autotaskService.getDefaultResourceId();
-          const cacheInfo = this.autotaskService.getApiUserCache();
-          
-          if (resourceId && cacheInfo) {
-            result = {
-              resourceId: resourceId,
-              email: cacheInfo.email,
-              name: cacheInfo.resourceName,
-              lastUpdated: cacheInfo.lastUpdated,
-            };
-            message = `Default Resource (API User): ${cacheInfo.resourceName} (ID: ${resourceId}, ${cacheInfo.email})`;
-          } else {
-            result = { resourceId: null };
-            message = 'No default resource ID configured. API user resource not found or not initialized.';
-          }
-          break;
-        }
-
+```
         case 'autotask_test_connection': {
           const connectionResult = await this.autotaskService.testConnection();
           result = { success: connectionResult };
