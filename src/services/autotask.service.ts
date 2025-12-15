@@ -211,13 +211,18 @@ export class AutotaskService {
         return;
       }
 
-      // Cache miss - look up resource by email
+      // Cache miss - look up resource by email using API filter
       this.logger.info(`Looking up resource ID for API user: ${apiUserEmail}`);
-      const resources = await this.searchResources({ pageSize: -1 });
+      let resources = await this.searchResources({ email: apiUserEmail, pageSize: 1 } as any);
       
-      const apiUserResource = resources.find(
-        (r) => r.email?.toLowerCase() === apiUserEmail.toLowerCase()
-      );
+      // If no resource found by email, fall back to first active resource
+      // (API user email may not match any resource email in Autotask)
+      if (resources.length === 0) {
+        this.logger.info('No resource found with API user email, falling back to first active resource');
+        resources = await this.searchResources({ pageSize: 1 } as any);
+      }
+      
+      const apiUserResource = resources.length > 0 ? resources[0] : null;
 
       if (apiUserResource && apiUserResource.id) {
         this.defaultResourceId = apiUserResource.id;
@@ -228,7 +233,7 @@ export class AutotaskService {
         
         this.logger.info(`Default resource ID: ${this.defaultResourceId} (${resourceName})`);
       } else {
-        this.logger.warn(`Could not find resource for API user email: ${apiUserEmail}`);
+        this.logger.warn(`Could not find any active resource in Autotask`);
       }
     } catch (error) {
       this.logger.warn('Failed to initialize default resource ID:', error);
@@ -1255,6 +1260,44 @@ export class AutotaskService {
       // Resolve pagination with safe defaults (25 for larger records)
       const { pageSize, unlimited } = this.resolvePaginationOptions(options, 25);
 
+      // Build filter array for API query
+      const filters: any[] = [];
+      
+      // Add email filter if provided (search by username OR full email)
+      if ((options as any).email) {
+        const email = (options as any).email;
+        const username = email.includes('@') ? email.split('@')[0] : email;
+        
+        // Search for either username (before @) or full email
+        filters.push({
+          op: 'or',
+          items: [
+            {
+              op: 'eq',
+              field: 'userName',
+              value: username,
+            },
+            {
+              op: 'eq',
+              field: 'email',
+              value: email,
+            },
+          ],
+        });
+      }
+
+      // Default filter if none provided (required by Autotask API)
+      if (filters.length === 0 && !options.filter) {
+        filters.push({
+          op: 'gte',
+          field: 'id',
+          value: 0,
+        });
+      }
+
+      // Determine final filter to use
+      const finalFilter = filters.length > 0 ? filters : options.filter;
+
       if (unlimited) {
         // Unlimited mode: fetch ALL resources via pagination
         const allResources: AutotaskResource[] = [];
@@ -1263,16 +1306,24 @@ export class AutotaskService {
         let hasMorePages = true;
 
         while (hasMorePages) {
-          const queryOptions = {
-            ...options,
-            pageSize: batchSize,
-            page: currentPage,
+          const searchBody = {
+            filter: finalFilter,
+            MaxRecords: batchSize,
           };
 
-          this.logger.debug(`Fetching resources page ${currentPage}...`);
+          this.logger.debug(`Fetching resources page ${currentPage} with body:`, searchBody);
 
-          const result = await client.resources.list(queryOptions as any);
-          const resources = (result.data as AutotaskResource[]) || [];
+          // Use direct POST to /Resources/query endpoint (autotask-node library uses wrong method)
+          const response = await (client as any).axios.post('/Resources/query', searchBody);
+          
+          // Validate response structure
+          if (!response.data || !response.data.items) {
+            this.logger.warn('Unexpected response format from Resources/query:', response.data);
+            hasMorePages = false;
+            break;
+          }
+
+          const resources = response.data.items as AutotaskResource[];
 
           if (resources.length === 0) {
             hasMorePages = false;
@@ -1297,13 +1348,23 @@ export class AutotaskService {
         return allResources;
       } else {
         // Limited mode: fetch single page
-        const queryOptions = {
-          ...options,
-          pageSize: pageSize!,
+        const searchBody = {
+          filter: finalFilter,
+          MaxRecords: pageSize!,
         };
 
-        const result = await client.resources.list(queryOptions as any);
-        let resources = (result.data as AutotaskResource[]) || [];
+        this.logger.debug('Making direct API call to Resources/query with body:', searchBody);
+
+        // Use direct POST to /Resources/query endpoint (autotask-node library uses wrong method)
+        const response = await (client as any).axios.post('/Resources/query', searchBody);
+
+        // Validate response structure
+        if (!response.data || !response.data.items) {
+          this.logger.warn('Unexpected response format from Resources/query:', response.data);
+          return [];
+        }
+
+        let resources = response.data.items as AutotaskResource[];
 
         // Safety cap: Autotask API sometimes ignores pageSize, enforce client-side
         if (resources.length > pageSize!) {

@@ -4,9 +4,9 @@
  * Test script specifically for the searchProjects method
  */
 
-const { config } = require('dotenv');
-const { AutotaskService } = require('../dist/services/autotask.service.js');
-const winston = require('winston');
+import { config } from 'dotenv';
+import { AutotaskService } from '../dist/services/autotask.service.js';
+import winston from 'winston';
 
 // Load environment variables
 config();

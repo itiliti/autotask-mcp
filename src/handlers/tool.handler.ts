@@ -281,7 +281,7 @@ export class AutotaskToolHandler {
       {
         name: 'autotask_search_resources',
         description:
-          'Search for resources (users) in Autotask. Returns 25 resources by default. Use filters (searchTerm, isActive, resourceType) to narrow results before requesting more data.',
+          'Search for resources (users) in Autotask. Returns 25 resources by default. Use filters (email, searchTerm, isActive, resourceType) to narrow results. Email filter performs exact match lookup.',
         inputSchema: zodToJsonSchema(ResourceSchemas.SearchResources, { $refStrategy: 'none', target: 'jsonSchema7' }) as any,
         annotations: {
           title: 'Search Resources',

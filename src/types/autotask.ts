@@ -336,6 +336,7 @@ export interface AutotaskQueryOptionsExtended extends AutotaskQueryOptions {
   contactId?: number;
   opportunityId?: number;
   searchTerm?: string;
+  email?: string;
   status?: number;
   assignedResourceID?: number;
   unassigned?: boolean;
