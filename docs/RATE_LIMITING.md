@@ -180,10 +180,46 @@ To monitor rate limiting behavior:
    - Verify single-thread mode activates at 50%
    - Confirm recovery when usage drops
 
+## Response Size Optimization
+
+### Field Limiting
+
+Implemented `includeFields` parameter in `searchTickets` to reduce API response size at the source:
+
+**Essential Fields Returned:**
+
+- `id`, `ticketNumber`, `title`, `description`
+- `status`, `priority`, `companyID`, `contactID`, `assignedResourceID`
+- `createDate`, `lastActivityDate`, `dueDateTime`, `completedDate`
+- `estimatedHours`, `ticketType`, `source`
+- `issueType`, `subIssueType`, `resolution`
+
+**Benefits:**
+
+- Reduces response from ~76 fields (~2KB per ticket) to 19 essential fields
+- Significantly improves API response time for large result sets
+- Reduces bandwidth usage and parsing overhead
+- Client-side truncation still applied for `description` (200 chars) and `resolution` (100 chars)
+
+**Implementation:**
+
+```typescript
+const queryOptions = {
+  filter: filters,
+  pageSize: pageSize,
+  includeFields: essentialFields, // Limits fields at API level
+};
+```
+
+**Reference:**
+
+- [Autotask Advanced Query Features](https://autotask.net/help/developerhelp/Content/APIs/REST/API_Calls/REST_Advanced_Query_Features.htm)
+
 ## References
 
 - [Autotask Thread Limiting Documentation](https://autotask.net/help/developerhelp/Content/APIs/General/ThreadLimiting.htm)
 - [Autotask REST API Thresholds & Limits](https://autotask.net/help/developerhelp/Content/APIs/REST/General_Topics/REST_Thresholds_Limits.htm)
+- [Autotask Advanced Query Features](https://autotask.net/help/developerhelp/Content/APIs/REST/API_Calls/REST_Advanced_Query_Features.htm)
 
 ## Files Modified
 
@@ -213,5 +249,5 @@ To monitor rate limiting behavior:
 ## Build Info
 
 - **Version**: 3.0.3
-- **Build Date**: 12/15/2025, 5:00:17 PM
+- **Build Date**: 12/15/2025, 6:02:07 PM
 - **Status**: ✅ Build successful, no vulnerabilities

@@ -743,6 +743,29 @@ export class AutotaskService {
       // Resolve pagination with safe defaults
       const { pageSize, unlimited } = this.resolvePaginationOptions(options, 50);
 
+      // Define essential fields to request from API (reduces response size significantly)
+      const essentialFields = [
+        'id',
+        'ticketNumber',
+        'title',
+        'description',
+        'status',
+        'priority',
+        'companyID',
+        'contactID',
+        'assignedResourceID',
+        'createDate',
+        'lastActivityDate',
+        'dueDateTime',
+        'completedDate',
+        'estimatedHours',
+        'ticketType',
+        'source',
+        'issueType',
+        'subIssueType',
+        'resolution',
+      ];
+
       if (unlimited) {
         // Unlimited mode: fetch ALL tickets via pagination
         const allTickets: AutotaskTicket[] = [];
@@ -755,6 +778,7 @@ export class AutotaskService {
             filter: filters,
             pageSize: batchSize,
             page: currentPage,
+            includeFields: essentialFields,
           };
 
           this.logger.debug(`Fetching tickets page ${currentPage} with filter:`, filters);
@@ -790,6 +814,7 @@ export class AutotaskService {
         const queryOptions = {
           filter: filters,
           pageSize: pageSize!,
+          includeFields: essentialFields,
         };
 
         this.logger.debug('Single page ticket request:', queryOptions);
