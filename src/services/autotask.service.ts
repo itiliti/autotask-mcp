@@ -31,6 +31,7 @@ import { McpServerConfig } from '../types/mcp';
 import { Logger } from '../utils/logger';
 import { TicketMetadataCache } from './ticket-metadata.cache.js';
 import { ErrorMapper } from '../utils/error-mapper.js';
+import { ApiUserCacheService } from './api-user-cache.service.js';
 
 export class AutotaskService {
   private client: AutotaskClient | null = null;
@@ -39,6 +40,8 @@ export class AutotaskService {
   private initializationPromise: Promise<void> | null = null;
   private metadataCache: TicketMetadataCache;
   private rateLimiter: RateLimiterService;
+  private apiUserCache: ApiUserCacheService;
+  private defaultResourceId: number | null = null;
 
   constructor(config: McpServerConfig, logger: Logger) {
     this.config = config;
@@ -51,6 +54,7 @@ export class AutotaskService {
       criticalUsageThreshold: 80, // Force check at 80% usage
       minimumCallsRemaining: 100, // Block when <100 calls remaining
     });
+    this.apiUserCache = new ApiUserCacheService(logger);
   }
 
   /**
@@ -84,6 +88,9 @@ export class AutotaskService {
       // Initialize metadata cache
       this.metadataCache.setClient(this.client);
       await this.metadataCache.initialize();
+
+      // Initialize default resource ID (API user)
+      await this.initializeDefaultResourceId();
     } catch (error) {
       this.logger.error('Failed to initialize Autotask client:', error);
       throw error;
@@ -181,6 +188,67 @@ export class AutotaskService {
    */
   getRateLimiterStatus() {
     return this.rateLimiter.getStatus();
+  }
+
+  /**
+   * Initialize the default resource ID from the API user email
+   * Uses cache to avoid lookups on every startup
+   */
+  private async initializeDefaultResourceId(): Promise<void> {
+    try {
+      const apiUserEmail = this.config.autotask.username;
+      
+      if (!apiUserEmail) {
+        this.logger.warn('No API user email configured, cannot initialize default resource ID');
+        return;
+      }
+      
+      // Check cache first
+      const cachedResourceId = await this.apiUserCache.getCachedResourceId(apiUserEmail);
+      if (cachedResourceId) {
+        this.defaultResourceId = cachedResourceId;
+        this.logger.info(`Default resource ID: ${cachedResourceId} (from cache)`);
+        return;
+      }
+
+      // Cache miss - look up resource by email
+      this.logger.info(`Looking up resource ID for API user: ${apiUserEmail}`);
+      const resources = await this.searchResources({ pageSize: -1 });
+      
+      const apiUserResource = resources.find(
+        (r) => r.email?.toLowerCase() === apiUserEmail.toLowerCase()
+      );
+
+      if (apiUserResource && apiUserResource.id) {
+        this.defaultResourceId = apiUserResource.id;
+        const resourceName = `${apiUserResource.firstName || ''} ${apiUserResource.lastName || ''}`.trim() || 'Unknown';
+        
+        // Cache for future use
+        await this.apiUserCache.saveResourceId(apiUserEmail, apiUserResource.id, resourceName);
+        
+        this.logger.info(`Default resource ID: ${this.defaultResourceId} (${resourceName})`);
+      } else {
+        this.logger.warn(`Could not find resource for API user email: ${apiUserEmail}`);
+      }
+    } catch (error) {
+      this.logger.warn('Failed to initialize default resource ID:', error);
+      // Non-fatal - operations can still work without default resource
+    }
+  }
+
+  /**
+   * Get the default resource ID (API user)
+   * Returns null if not initialized or not found
+   */
+  getDefaultResourceId(): number | null {
+    return this.defaultResourceId;
+  }
+
+  /**
+   * Get API user cache information
+   */
+  getApiUserCache() {
+    return this.apiUserCache.getCache();
   }
 
   /**

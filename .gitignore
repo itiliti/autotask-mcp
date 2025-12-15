@@ -41,3 +41,8 @@ WARP.md
 .codex/version.json
 .codex/history.jsonl
 
+# Backup files
+.backups/
+*.backup
+*.backup-*
+
