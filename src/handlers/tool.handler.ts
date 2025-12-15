@@ -121,6 +121,7 @@ export class AutotaskToolHandler {
           ...TEST_ANNOTATIONS,
         },
       },
+```typescript
       {
         name: 'autotask_get_default_resource',
         description: 'Get the default resource ID (API user). This resource is used as default when a resource is required but not specified. Shows cached information about the API user.',
@@ -654,6 +655,25 @@ export class AutotaskToolHandler {
             status.callsRemaining !== null ? `- Calls remaining: ${status.callsRemaining}` : '',
             warnings.length > 0 ? `- Warnings: ${warnings.join(', ')}` : '',
           ].filter(Boolean).join('\n');
+          break;
+        }
+```typescript
+        case 'autotask_get_default_resource': {
+          const resourceId = this.autotaskService.getDefaultResourceId();
+          const cacheInfo = this.autotaskService.getApiUserCache();
+
+          if (resourceId && cacheInfo) {
+            result = {
+              resourceId: resourceId,
+              email: cacheInfo.email,
+              name: cacheInfo.resourceName,
+              lastUpdated: cacheInfo.lastUpdated,
+            };
+            message = `Default Resource (API User): ${cacheInfo.resourceName} (ID: ${resourceId}, ${cacheInfo.email})`;
+          } else {
+            result = { resourceId: null };
+            message = 'No default resource ID configured. API user resource not found or not initialized.';
+          }
           break;
         }
 ```
