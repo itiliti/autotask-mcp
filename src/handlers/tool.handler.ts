@@ -135,7 +135,6 @@ export class AutotaskToolHandler {
           ...TEST_ANNOTATIONS,
         },
       },
-```
       // Connection testing
       {
         name: 'autotask_test_connection',
@@ -676,7 +675,6 @@ export class AutotaskToolHandler {
           }
           break;
         }
-```
         case 'autotask_test_connection': {
           const connectionResult = await this.autotaskService.testConnection();
           result = { success: connectionResult };

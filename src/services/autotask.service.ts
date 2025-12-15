@@ -191,6 +191,67 @@ export class AutotaskService {
   }
 
   /**
+   * Initialize the default resource ID from the API user email
+   * Uses cache to avoid lookups on every startup
+   */
+  private async initializeDefaultResourceId(): Promise<void> {
+    try {
+      const apiUserEmail = this.config.autotask.username;
+      
+      if (!apiUserEmail) {
+        this.logger.warn('No API user email configured, cannot initialize default resource ID');
+        return;
+      }
+      
+      // Check cache first
+      const cachedResourceId = await this.apiUserCache.getCachedResourceId(apiUserEmail);
+      if (cachedResourceId) {
+        this.defaultResourceId = cachedResourceId;
+        this.logger.info(`Default resource ID: ${cachedResourceId} (from cache)`);
+        return;
+      }
+
+      // Cache miss - look up resource by email
+      this.logger.info(`Looking up resource ID for API user: ${apiUserEmail}`);
+      const resources = await this.searchResources({ pageSize: -1 });
+      
+      const apiUserResource = resources.find(
+        (r) => r.email?.toLowerCase() === apiUserEmail.toLowerCase()
+      );
+
+      if (apiUserResource && apiUserResource.id) {
+        this.defaultResourceId = apiUserResource.id;
+        const resourceName = `${apiUserResource.firstName || ''} ${apiUserResource.lastName || ''}`.trim() || 'Unknown';
+        
+        // Cache for future use
+        await this.apiUserCache.saveResourceId(apiUserEmail, apiUserResource.id, resourceName);
+        
+        this.logger.info(`Default resource ID: ${this.defaultResourceId} (${resourceName})`);
+      } else {
+        this.logger.warn(`Could not find resource for API user email: ${apiUserEmail}`);
+      }
+    } catch (error) {
+      this.logger.warn('Failed to initialize default resource ID:', error);
+      // Non-fatal - operations can still work without default resource
+    }
+  }
+
+  /**
+   * Get the default resource ID (API user)
+   * Returns null if not initialized or not found
+   */
+  getDefaultResourceId(): number | null {
+    return this.defaultResourceId;
+  }
+
+  /**
+   * Get API user cache information
+   */
+  getApiUserCache() {
+    return this.apiUserCache.getCache();
+  }
+
+  /**
    * Execute API request with rate limiting and threshold monitoring
    */
   private async executeWithRateLimit<T>(
