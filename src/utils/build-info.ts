@@ -10,7 +10,7 @@ export interface BuildInfo {
 export function getBuildInfo(): BuildInfo {
   return {
     version: '3.0.3',
-    buildDate: '12/15/2025, 6:02:07 PM',
-    buildTimestamp: 1765839727966,
+    buildDate: '12/15/2025, 6:49:16 PM',
+    buildTimestamp: 1765842556695,
   };
 }

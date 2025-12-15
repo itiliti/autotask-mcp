@@ -211,13 +211,18 @@ export class AutotaskService {
         return;
       }
 
-      // Cache miss - look up resource by email
+      // Cache miss - look up resource by email using API filter
       this.logger.info(`Looking up resource ID for API user: ${apiUserEmail}`);
-      const resources = await this.searchResources({ pageSize: -1 });
+      let resources = await this.searchResources({ email: apiUserEmail, pageSize: 1 } as any);
       
-      const apiUserResource = resources.find(
-        (r) => r.email?.toLowerCase() === apiUserEmail.toLowerCase()
-      );
+      // If no resource found by email, fall back to first active resource
+      // (API user email may not match any resource email in Autotask)
+      if (resources.length === 0) {
+        this.logger.info('No resource found with API user email, falling back to first active resource');
+        resources = await this.searchResources({ pageSize: 1 } as any);
+      }
+      
+      const apiUserResource = resources.length > 0 ? resources[0] : null;
 
       if (apiUserResource && apiUserResource.id) {
         this.defaultResourceId = apiUserResource.id;
@@ -228,7 +233,7 @@ export class AutotaskService {
         
         this.logger.info(`Default resource ID: ${this.defaultResourceId} (${resourceName})`);
       } else {
-        this.logger.warn(`Could not find resource for API user email: ${apiUserEmail}`);
+        this.logger.warn(`Could not find any active resource in Autotask`);
       }
     } catch (error) {
       this.logger.warn('Failed to initialize default resource ID:', error);
