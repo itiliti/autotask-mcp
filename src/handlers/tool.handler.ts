@@ -107,6 +107,19 @@ export class AutotaskToolHandler {
           ...TEST_ANNOTATIONS,
         },
       },
+      {
+        name: 'autotask_get_rate_limit_status',
+        description: 'Get current API rate limit status including usage thresholds, active requests, and queue depth. Shows API usage percentage and thread management status.',
+        inputSchema: {
+          type: 'object',
+          properties: {},
+          required: [],
+        },
+        annotations: {
+          title: 'Get Rate Limit Status',
+          ...TEST_ANNOTATIONS,
+        },
+      },
 
       // Connection testing
       {
@@ -594,6 +607,37 @@ export class AutotaskToolHandler {
           const buildInfo = getBuildInfo();
           result = buildInfo;
           message = `Server version ${buildInfo.version}, built on ${buildInfo.buildDate}`;
+          break;
+        }
+
+        case 'autotask_get_rate_limit_status': {
+          const status = this.autotaskService.getRateLimiterStatus();
+          result = status;
+          
+          const warnings: string[] = [];
+          if (status.isBlocked) {
+            warnings.push(`🚫 BLOCKED: Less than 100 API calls remaining`);
+          }
+          if (status.isHighUsage) {
+            warnings.push(`⚠️  API usage above 50% - operating in single-thread mode`);
+          }
+          if (status.queuedRequests > 0) {
+            warnings.push(`${status.queuedRequests} requests queued`);
+          }
+          
+          const thresholdText = status.threshold 
+            ? `${status.threshold.requestCount}/${status.threshold.requestLimit} (${status.threshold.percentageUsed.toFixed(1)}%)`
+            : 'Not yet checked';
+          
+          message = [
+            `Rate Limiter Status:`,
+            `- Active requests: ${status.activeRequests}/${status.maxConcurrentRequests}`,
+            `- Queued requests: ${status.queuedRequests}`,
+            `- API calls since last check: ${status.apiCallsSinceCheck}/19`,
+            `- API usage: ${thresholdText}`,
+            status.callsRemaining !== null ? `- Calls remaining: ${status.callsRemaining}` : '',
+            warnings.length > 0 ? `- Warnings: ${warnings.join(', ')}` : '',
+          ].filter(Boolean).join('\n');
           break;
         }
 
