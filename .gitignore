@@ -46,3 +46,4 @@ WARP.md
 *.backup
 *.backup-*
 
+src/utils/build-info.ts
