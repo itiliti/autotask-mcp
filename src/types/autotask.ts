@@ -340,17 +340,52 @@ export interface AutotaskQueryOptionsExtended extends AutotaskQueryOptions {
   assignedResourceID?: number;
   unassigned?: boolean;
   isActive?: boolean;
+  createDateFrom?: string;
+  createDateTo?: string;
   // Note: Pagination is now enabled by default. Only specify pageSize to limit results.
 }
 
-// Status enums (commonly used values)
+// Closed Ticket Status IDs
+// These status IDs represent tickets that are considered closed/completed in Autotask
+export const CLOSED_TICKET_STATUSES = [5, 20, 21, 24, 26, 27] as const;
+
+// Status enums (all Autotask ticket statuses)
 export enum TicketStatus {
   New = 1,
-  InProgress = 2,
   Complete = 5,
   WaitingCustomer = 7,
-  WaitingVendor = 8,
-  Escalated = 9,
+  InProgress = 8,
+  WaitingMaterials = 9,
+  Dispatched = 10,
+  Escalate = 11,
+  WaitingVendor = 12,
+  WaitingApproval = 13,
+  ChangeOrder = 15,
+  WorkComplete = 16,
+  OnHold = 17,
+  CustomerNoteAdded = 19,
+  Inactive = 20,
+  Cancelled = 21,
+  Reopened = 22,
+  Approved = 23,
+  Rejected = 24,
+  PendingClientApproval = 25,
+  InternalRejected = 26,
+  ClientRejected = 27,
+  ClientApproved = 28,
+  WaitingMultipleApproval = 30,
+  PendingClosureTasks = 31,
+  PendingAgentValidation = 32,
+  PendingSystemChanges = 33,
+  PendingResources = 34,
+  InTransit = 35,
+  PendingExternalChange = 36,
+  TimeEntryNeeded = 37,
+  AlertAcknowledged = 38,
+  CxOApproved = 40,
+  PendingInitialApproval = 41,
+  PendingCxOApproval = 42,
+  EmailReceived = 43,
 }
 
 export enum TicketPriority {
