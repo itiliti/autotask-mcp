@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 
+// Import wrapper FIRST to redirect console output before anything else
+import './wrapper.js';
+
 // CLI entry point for running the Autotask MCP server locally
 // Loads environment configuration, initializes logging, and starts the server
 
