@@ -20,14 +20,30 @@ import {
 /**
  * Search Tickets Tool Parameters
  * Tool: autotask_search_tickets
+ *
+ * Status IDs:
+ * - Open tickets (default): Any status except closed statuses
+ * - Closed ticket statuses: 5 (Complete), 20 (Inactive), 21 (Cancelled), 24 (Rejected), 26 (Internal Rejected), 27 (Client Rejected)
+ * - Common open statuses: 1 (New), 2 (In Progress), 7 (Waiting Customer), 8 (Waiting Vendor), 9 (Escalated)
+ *
+ * When no status filter is provided, searches return only open tickets (excluding all closed statuses).
+ * To search closed tickets, explicitly specify one of the closed status IDs.
  */
 export const SearchTicketsInputSchema = z
   .object({
     searchTerm: SearchTermSchema,
     companyID: PositiveIdSchema.optional(),
-    status: PositiveIdSchema.optional(),
+    status: PositiveIdSchema.describe(
+      'Ticket status ID. Open statuses: 1=New, 2=In Progress, 7=Waiting Customer, 8=Waiting Vendor, 9=Escalated. Closed statuses: 5=Complete, 20=Inactive, 21=Cancelled, 24=Rejected, 26=Internal Rejected, 27=Client Rejected. Omit to search only open tickets.'
+    ).optional(),
     assignedResourceID: PositiveIdSchema.optional(),
     unassigned: BooleanFilterSchema,
+    createDateFrom: ISODateTimeSchema.optional().describe(
+      'Filter tickets created on or after this date/time (ISO 8601 format, e.g., 2025-01-01T00:00:00Z)'
+    ),
+    createDateTo: ISODateTimeSchema.optional().describe(
+      'Filter tickets created on or before this date/time (ISO 8601 format, e.g., 2025-12-31T23:59:59Z)'
+    ),
     pageSize: PageSizeStandardSchema,
   })
   .strict();
