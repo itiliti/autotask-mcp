@@ -12,6 +12,7 @@ import { ResourceService } from './entities/resource.service.js';
 import { ConfigurationItemService } from './entities/configuration-item.service.js';
 import { QuoteService } from './entities/quote.service.js';
 import { ExpenseService } from './entities/expense.service.js';
+import { TimeEntryService } from './entities/time-entry.service.js';
 import {
   AutotaskCompany,
   AutotaskContact,
@@ -62,6 +63,7 @@ export class AutotaskService {
   private _configurationItemService: ConfigurationItemService | null = null;
   private _quoteService: QuoteService | null = null;
   private _expenseService: ExpenseService | null = null;
+  private _timeEntryService: TimeEntryService | null = null;
 
   constructor(config: McpServerConfig, logger: Logger) {
     this.config = config;
@@ -466,6 +468,16 @@ export class AutotaskService {
       this._expenseService = new ExpenseService(this.getServiceContext());
     }
     return this._expenseService;
+  }
+
+  /**
+   * Get the TimeEntryService instance (lazy-initialized)
+   */
+  private get timeEntryService(): TimeEntryService {
+    if (!this._timeEntryService) {
+      this._timeEntryService = new TimeEntryService(this.getServiceContext());
+    }
+    return this._timeEntryService;
   }
 
   // ============================================================================
@@ -888,33 +900,13 @@ export class AutotaskService {
     }
   }
 
-  // Time entry operations
+  // Time entry operations - delegated to TimeEntryService
   async createTimeEntry(timeEntry: Partial<AutotaskTimeEntry>): Promise<number> {
-    const client = await this.ensureClient();
-
-    try {
-      this.logger.debug('Creating time entry:', timeEntry);
-      const result = await client.timeEntries.create(timeEntry as any);
-      const timeEntryId = (result.data as any)?.id;
-      this.logger.info(`Time entry created with ID: ${timeEntryId}`);
-      return timeEntryId;
-    } catch (error) {
-      this.logger.error('Failed to create time entry:', error);
-      throw error;
-    }
+    return this.timeEntryService.createTimeEntry(timeEntry);
   }
 
   async getTimeEntries(options: AutotaskQueryOptions = {}): Promise<AutotaskTimeEntry[]> {
-    const client = await this.ensureClient();
-
-    try {
-      this.logger.debug('Getting time entries with options:', options);
-      const result = await client.timeEntries.list(options as any);
-      return (result.data as AutotaskTimeEntry[]) || [];
-    } catch (error) {
-      this.logger.error('Failed to get time entries:', error);
-      throw error;
-    }
+    return this.timeEntryService.getTimeEntries(options);
   }
 
   // Project operations
