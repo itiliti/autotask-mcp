@@ -3,6 +3,8 @@
 
 import { AutotaskClient } from 'autotask-node';
 import { RateLimiterService, ThresholdInfo } from './rate-limiter.service.js';
+import { ServiceContext, IServiceContext } from './core/service.context.js';
+import { ContractService } from './entities/contract.service.js';
 import {
   AutotaskCompany,
   AutotaskContact,
@@ -42,6 +44,10 @@ export class AutotaskService {
   private rateLimiter: RateLimiterService;
   private apiUserCache: ApiUserCacheService;
   private defaultResourceId: number | null = null;
+
+  // Service context and entity services (lazy-initialized)
+  private _serviceContext: IServiceContext | null = null;
+  private _contractService: ContractService | null = null;
 
   constructor(config: McpServerConfig, logger: Logger) {
     this.config = config;
@@ -341,6 +347,46 @@ export class AutotaskService {
     );
     return { pageSize: defaultPageSize, unlimited: false };
   }
+
+  // ============================================================================
+  // SERVICE CONTEXT AND ENTITY SERVICES
+  // ============================================================================
+
+  /**
+   * Get or create the shared service context
+   * Used by entity services to access shared infrastructure
+   */
+  private getServiceContext(): IServiceContext {
+    if (!this._serviceContext) {
+      this._serviceContext = new ServiceContext({
+        getClient: () => this.ensureClient(),
+        logger: this.logger,
+        rateLimiter: this.rateLimiter,
+        metadataCache: this.metadataCache,
+        apiUserCache: this.apiUserCache,
+        config: this.config,
+        executeWithRateLimit: <T>(request: () => Promise<T>, endpoint?: string) =>
+          this.executeWithRateLimit(request, endpoint),
+        resolvePaginationOptions: (options, defaultPageSize) =>
+          this.resolvePaginationOptions(options, defaultPageSize),
+      });
+    }
+    return this._serviceContext;
+  }
+
+  /**
+   * Get the ContractService instance (lazy-initialized)
+   */
+  private get contractService(): ContractService {
+    if (!this._contractService) {
+      this._contractService = new ContractService(this.getServiceContext());
+    }
+    return this._contractService;
+  }
+
+  // ============================================================================
+  // ENTITY OPERATIONS
+  // ============================================================================
 
   // Company operations (using accounts in autotask-node)
   async getCompany(id: number): Promise<AutotaskCompany | null> {
@@ -1565,54 +1611,13 @@ export class AutotaskService {
   //   }
   // }
 
-  // Contract operations (read-only for now as they're complex)
+  // Contract operations - delegated to ContractService
   async getContract(id: number): Promise<AutotaskContract | null> {
-    const client = await this.ensureClient();
-
-    try {
-      this.logger.debug(`Getting contract with ID: ${id}`);
-      const result = await client.contracts.get(id);
-      return (result.data as unknown as AutotaskContract) || null;
-    } catch (error) {
-      this.logger.error(`Failed to get contract ${id}:`, error);
-      throw error;
-    }
+    return this.contractService.getContract(id);
   }
 
-  /**
-   * Search for contracts with safe pagination defaults
-   *
-   * @param options - Search options with optional pageSize
-   * @returns Array of contracts
-   *
-   * Pagination behavior (v2.0.0+):
-   * - No pageSize specified: Returns 25 contracts (safe default)
-   * - pageSize: N (1-500): Returns up to N contracts
-   * - pageSize: -1: Returns ALL contracts (use with caution)
-   */
   async searchContracts(options: AutotaskQueryOptions = {}): Promise<AutotaskContract[]> {
-    const client = await this.ensureClient();
-
-    try {
-      this.logger.debug('Searching contracts with options:', options);
-
-      // Resolve pagination with safe defaults
-      const { pageSize, unlimited } = this.resolvePaginationOptions(options, 25);
-
-      const queryOptions = {
-        ...options,
-        pageSize: unlimited ? 500 : pageSize!,
-      };
-
-      const result = await client.contracts.list(queryOptions as any);
-      const contracts = (result.data as unknown as AutotaskContract[]) || [];
-
-      this.logger.info(`Retrieved ${contracts.length} contracts (pageSize: ${pageSize || 'unlimited'})`);
-      return contracts;
-    } catch (error) {
-      this.logger.error('Failed to search contracts:', error);
-      throw error;
-    }
+    return this.contractService.searchContracts(options);
   }
 
   // Invoice operations (read-only)
