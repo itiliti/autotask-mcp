@@ -524,7 +524,7 @@ export class AutotaskService {
         });
       }
 
-      // Handle status filter with more accurate open ticket definition
+      // Handle status filter with accurate open/closed ticket definition
       if (options.status !== undefined) {
         filters.push({
           op: 'eq',
@@ -532,14 +532,16 @@ export class AutotaskService {
           value: options.status,
         });
       } else {
-        // For "open" tickets, we need to be more specific about Autotask status values
-        // Based on Autotask documentation, typical open statuses are:
-        // 1 = New, 2 = In Progress, 8 = Waiting Customer, 9 = Waiting Vendor, etc.
-        // Status 5 = Complete/Closed, so anything NOT complete should be considered open
-        filters.push({
-          op: 'ne',
-          field: 'status',
-          value: 5, // 5 = Complete in Autotask
+        // For "open" tickets, exclude all closed status IDs:
+        // 5 = Complete, 20 = Inactive, 21 = Cancelled, 24 = Rejected, 26 = Internal Rejected, 27 = Client Rejected
+        // Build a filter that excludes all closed statuses
+        const closedStatuses = [5, 20, 21, 24, 26, 27];
+        closedStatuses.forEach(statusId => {
+          filters.push({
+            op: 'ne',
+            field: 'status',
+            value: statusId,
+          });
         });
       }
 
@@ -565,6 +567,23 @@ export class AutotaskService {
           op: 'eq',
           field: 'companyID',
           value: options.companyId,
+        });
+      }
+
+      // Handle createDate range filters
+      if (options.createDateFrom !== undefined) {
+        filters.push({
+          op: 'gte',
+          field: 'createDate',
+          value: options.createDateFrom,
+        });
+      }
+
+      if (options.createDateTo !== undefined) {
+        filters.push({
+          op: 'lte',
+          field: 'createDate',
+          value: options.createDateTo,
         });
       }
 

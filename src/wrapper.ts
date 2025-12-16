@@ -57,6 +57,3 @@ process.stdout.write = function (chunk: any, encoding?: any, callback?: any) {
   }
   return true;
 };
-
-// Now load and run the actual application
-require('./index.js');

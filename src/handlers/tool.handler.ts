@@ -93,6 +93,21 @@ export class AutotaskToolHandler {
     this.logger.debug('Listing available Autotask tools');
 
     const tools: McpTool[] = [
+      // Server information
+      {
+        name: 'autotask_get_build_info',
+        description: 'Get server build information including version and build date/time',
+        inputSchema: {
+          type: 'object',
+          properties: {},
+          required: [],
+        },
+        annotations: {
+          title: 'Get Build Info',
+          ...TEST_ANNOTATIONS,
+        },
+      },
+
       // Connection testing
       {
         name: 'autotask_test_connection',
@@ -574,6 +589,14 @@ export class AutotaskToolHandler {
       let message: string;
 
       switch (name) {
+        case 'autotask_get_build_info': {
+          const { getBuildInfo } = await import('../utils/build-info.js');
+          const buildInfo = getBuildInfo();
+          result = buildInfo;
+          message = `Server version ${buildInfo.version}, built on ${buildInfo.buildDate}`;
+          break;
+        }
+
         case 'autotask_test_connection': {
           const connectionResult = await this.autotaskService.testConnection();
           result = { success: connectionResult };
