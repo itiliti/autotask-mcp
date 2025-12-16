@@ -10,7 +10,9 @@
     "autotask-mcp": "dist/cli.js"
   },
   "scripts": {
-    "build": "npm run build:ts && npm run build:smithery",
+    "build": "npm run build:ts",
+    "build:all": "npm run build:ts && npm run build:smithery",
+    "build:link": "npm run build && npm link",
     "build:ts": "tsc",
     "build:smithery": "npx @smithery/cli build",
     "dev": "npx @smithery/cli dev",
