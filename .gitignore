@@ -32,6 +32,8 @@ NEW_ENTITIES_SUMMARY.md
 # Local-only assistant guide
 WARP.md
 .claude/settings.local.json
+# Include .claude/plans directory for tracking feature plans
+!.claude/plans/
 # BMAD (local only)
 .smithery/
 .envrc
