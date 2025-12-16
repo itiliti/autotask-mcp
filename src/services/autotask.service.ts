@@ -14,6 +14,7 @@ import { QuoteService } from './entities/quote.service.js';
 import { ExpenseService } from './entities/expense.service.js';
 import { TimeEntryService } from './entities/time-entry.service.js';
 import { ProjectService } from './entities/project.service.js';
+import { TaskService } from './entities/task.service.js';
 import {
   AutotaskCompany,
   AutotaskContact,
@@ -66,6 +67,7 @@ export class AutotaskService {
   private _expenseService: ExpenseService | null = null;
   private _timeEntryService: TimeEntryService | null = null;
   private _projectService: ProjectService | null = null;
+  private _taskService: TaskService | null = null;
 
   constructor(config: McpServerConfig, logger: Logger) {
     this.config = config;
@@ -490,6 +492,16 @@ export class AutotaskService {
       this._projectService = new ProjectService(this.getServiceContext());
     }
     return this._projectService;
+  }
+
+  /**
+   * Get the TaskService instance (lazy-initialized)
+   */
+  private get taskService(): TaskService {
+    if (!this._taskService) {
+      this._taskService = new TaskService(this.getServiceContext());
+    }
+    return this._taskService;
   }
 
   // ============================================================================
@@ -1064,132 +1076,21 @@ export class AutotaskService {
     return this.invoiceService.searchInvoices(options);
   }
 
-  // Task operations
+  // Task operations - delegated to TaskService
   async getTask(id: number): Promise<AutotaskTask | null> {
-    const client = await this.ensureClient();
-
-    try {
-      this.logger.debug(`Getting task with ID: ${id}`);
-      const result = await client.tasks.get(id);
-      return (result.data as unknown as AutotaskTask) || null;
-    } catch (error) {
-      this.logger.error(`Failed to get task ${id}:`, error);
-      throw error;
-    }
+    return this.taskService.getTask(id);
   }
 
-  /**
-   * Search for tasks with safe pagination defaults
-   *
-   * @param options - Search options with optional pageSize
-   * @returns Array of optimized tasks
-   *
-   * Pagination behavior (v2.0.0+):
-   * - No pageSize specified: Returns 25 tasks (safe default)
-   * - pageSize: N (1-100): Returns up to N tasks (capped at 100)
-   * - pageSize: -1: Returns up to 100 tasks (API limit)
-   *
-   * Note: Tasks are optimized with field limiting for reduced response size.
-   */
   async searchTasks(options: AutotaskQueryOptions = {}): Promise<AutotaskTask[]> {
-    const client = await this.ensureClient();
-
-    try {
-      this.logger.debug('Searching tasks with options:', options);
-
-      // Resolve pagination with safe defaults
-      const { pageSize, unlimited } = this.resolvePaginationOptions(options, 25);
-      const finalPageSize = Math.min(unlimited ? 100 : pageSize!, 100); // Tasks API max is 100
-
-      // Define essential task fields to minimize response size
-      const essentialFields = [
-        'id',
-        'title',
-        'description',
-        'status',
-        'projectID',
-        'assignedResourceID',
-        'creatorResourceID',
-        'createDateTime',
-        'startDateTime',
-        'endDateTime',
-        'estimatedHours',
-        'hoursToBeScheduled',
-        'remainingHours',
-        'percentComplete',
-        'priorityLabel',
-        'taskType',
-        'lastActivityDateTime',
-        'completedDateTime',
-      ];
-
-      // Set default pagination and field limits
-      const optimizedOptions = {
-        ...options,
-        includeFields: essentialFields,
-        pageSize: finalPageSize,
-      };
-
-      const result = await client.tasks.list(optimizedOptions as any);
-      const tasks = (result.data as unknown as AutotaskTask[]) || [];
-
-      // Transform tasks to optimize data size
-      const optimizedTasks = tasks.map((task) => this.optimizeTaskData(task));
-
-      this.logger.info(`Retrieved ${optimizedTasks.length} tasks (pageSize: ${finalPageSize})`);
-      return optimizedTasks;
-    } catch (error) {
-      this.logger.error('Failed to search tasks:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Optimize task data by truncating large text fields
-   */
-  private optimizeTaskData(task: AutotaskTask): AutotaskTask {
-    const maxDescriptionLength = 400;
-
-    const optimizedDescription = task.description
-      ? task.description.length > maxDescriptionLength
-        ? task.description.substring(0, maxDescriptionLength) + '... [truncated]'
-        : task.description
-      : '';
-
-    return {
-      ...task,
-      description: optimizedDescription,
-      // Remove potentially large arrays
-      userDefinedFields: [],
-    };
+    return this.taskService.searchTasks(options);
   }
 
   async createTask(task: Partial<AutotaskTask>): Promise<number> {
-    const client = await this.ensureClient();
-
-    try {
-      this.logger.debug('Creating task:', task);
-      const result = await client.tasks.create(task as any);
-      const taskId = (result.data as any)?.id;
-      this.logger.info(`Task created with ID: ${taskId}`);
-      return taskId;
-    } catch (error) {
-      this.logger.error('Failed to create task:', error);
-      throw error;
-    }
+    return this.taskService.createTask(task);
   }
 
   async updateTask(id: number, updates: Partial<AutotaskTask>): Promise<void> {
-    const client = await this.ensureClient();
-
-    try {
-      this.logger.debug(`Updating task ${id}:`, updates);
-      await client.tasks.update(id, updates as any);
-      this.logger.info(`Task ${id} updated successfully`);
-    } catch (error) {
-      this.logger.error(`Failed to update task ${id}:`, error);
-      throw error;
-    }
+    return this.taskService.updateTask(id, updates);
   }
 
   // Utility methods
