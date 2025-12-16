@@ -5,6 +5,7 @@ import { AutotaskClient } from 'autotask-node';
 import { RateLimiterService, ThresholdInfo } from './rate-limiter.service.js';
 import { ServiceContext, IServiceContext } from './core/service.context.js';
 import { ContractService } from './entities/contract.service.js';
+import { InvoiceService } from './entities/invoice.service.js';
 import {
   AutotaskCompany,
   AutotaskContact,
@@ -48,6 +49,7 @@ export class AutotaskService {
   // Service context and entity services (lazy-initialized)
   private _serviceContext: IServiceContext | null = null;
   private _contractService: ContractService | null = null;
+  private _invoiceService: InvoiceService | null = null;
 
   constructor(config: McpServerConfig, logger: Logger) {
     this.config = config;
@@ -382,6 +384,16 @@ export class AutotaskService {
       this._contractService = new ContractService(this.getServiceContext());
     }
     return this._contractService;
+  }
+
+  /**
+   * Get the InvoiceService instance (lazy-initialized)
+   */
+  private get invoiceService(): InvoiceService {
+    if (!this._invoiceService) {
+      this._invoiceService = new InvoiceService(this.getServiceContext());
+    }
+    return this._invoiceService;
   }
 
   // ============================================================================
@@ -1620,54 +1632,13 @@ export class AutotaskService {
     return this.contractService.searchContracts(options);
   }
 
-  // Invoice operations (read-only)
+  // Invoice operations - delegated to InvoiceService
   async getInvoice(id: number): Promise<AutotaskInvoice | null> {
-    const client = await this.ensureClient();
-
-    try {
-      this.logger.debug(`Getting invoice with ID: ${id}`);
-      const result = await client.invoices.get(id);
-      return (result.data as AutotaskInvoice) || null;
-    } catch (error) {
-      this.logger.error(`Failed to get invoice ${id}:`, error);
-      throw error;
-    }
+    return this.invoiceService.getInvoice(id);
   }
 
-  /**
-   * Search for invoices with safe pagination defaults
-   *
-   * @param options - Search options with optional pageSize
-   * @returns Array of invoices
-   *
-   * Pagination behavior (v2.0.0+):
-   * - No pageSize specified: Returns 25 invoices (safe default)
-   * - pageSize: N (1-500): Returns up to N invoices
-   * - pageSize: -1: Returns ALL invoices (use with caution)
-   */
   async searchInvoices(options: AutotaskQueryOptions = {}): Promise<AutotaskInvoice[]> {
-    const client = await this.ensureClient();
-
-    try {
-      this.logger.debug('Searching invoices with options:', options);
-
-      // Resolve pagination with safe defaults
-      const { pageSize, unlimited } = this.resolvePaginationOptions(options, 25);
-
-      const queryOptions = {
-        ...options,
-        pageSize: unlimited ? 500 : pageSize!,
-      };
-
-      const result = await client.invoices.list(queryOptions as any);
-      const invoices = (result.data as AutotaskInvoice[]) || [];
-
-      this.logger.info(`Retrieved ${invoices.length} invoices (pageSize: ${pageSize || 'unlimited'})`);
-      return invoices;
-    } catch (error) {
-      this.logger.error('Failed to search invoices:', error);
-      throw error;
-    }
+    return this.invoiceService.searchInvoices(options);
   }
 
   // Task operations
