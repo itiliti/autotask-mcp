@@ -12,6 +12,7 @@ import {
   PageSizeLimitedSchema,
   SearchTermSchema,
   PositiveIdSchema,
+  NonNegativeIdSchema,
   DateStringSchema,
   createStringSchema,
 } from './common.schemas.js';
@@ -34,7 +35,7 @@ export type GetQuoteInput = z.infer<typeof GetQuoteInputSchema>;
  */
 export const SearchQuotesInputSchema = z
   .object({
-    companyId: PositiveIdSchema.optional(),
+    companyId: NonNegativeIdSchema.optional().describe('Company ID (0 = default/system company)'),
     contactId: PositiveIdSchema.optional(),
     opportunityId: PositiveIdSchema.optional(),
     searchTerm: SearchTermSchema,
@@ -52,7 +53,7 @@ export const CreateQuoteInputSchema = z
   .object({
     name: createStringSchema(100, 'Quote name', false),
     description: createStringSchema(8000, 'Quote description', false),
-    companyId: PositiveIdSchema,
+    companyId: NonNegativeIdSchema.describe('Company ID (0 = default/system company)'),
     contactId: PositiveIdSchema.optional(),
     opportunityId: PositiveIdSchema.optional(),
     effectiveDate: DateStringSchema.optional(),

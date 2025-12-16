@@ -107,6 +107,7 @@ export class AutotaskToolHandler {
           ...TEST_ANNOTATIONS,
         },
       },
+```typescript
       {
         name: 'autotask_get_rate_limit_status',
         description: 'Get current API rate limit status including usage thresholds, active requests, and queue depth. Shows API usage percentage and thread management status.',
@@ -120,6 +121,7 @@ export class AutotaskToolHandler {
           ...TEST_ANNOTATIONS,
         },
       },
+```typescript
       {
         name: 'autotask_get_default_resource',
         description: 'Get the default resource ID (API user). This resource is used as default when a resource is required but not specified. Shows cached information about the API user.',
@@ -133,6 +135,7 @@ export class AutotaskToolHandler {
           ...TEST_ANNOTATIONS,
         },
       },
+```
 
       // Connection testing
       {
@@ -278,7 +281,7 @@ export class AutotaskToolHandler {
       {
         name: 'autotask_search_resources',
         description:
-          'Search for resources (users) in Autotask. Returns 25 resources by default. Use filters (searchTerm, isActive, resourceType) to narrow results before requesting more data.',
+          'Search for resources (users) in Autotask. Returns 25 resources by default. Use filters (email, searchTerm, isActive, resourceType) to narrow results. Email filter performs exact match lookup.',
         inputSchema: zodToJsonSchema(ResourceSchemas.SearchResources, { $refStrategy: 'none', target: 'jsonSchema7' }) as any,
         annotations: {
           title: 'Search Resources',
@@ -623,10 +626,11 @@ export class AutotaskToolHandler {
           break;
         }
 
+```typescript
         case 'autotask_get_rate_limit_status': {
           const status = this.autotaskService.getRateLimiterStatus();
           result = status;
-          
+
           const warnings: string[] = [];
           if (status.isBlocked) {
             warnings.push(`🚫 BLOCKED: Less than 100 API calls remaining`);
@@ -637,11 +641,11 @@ export class AutotaskToolHandler {
           if (status.queuedRequests > 0) {
             warnings.push(`${status.queuedRequests} requests queued`);
           }
-          
-          const thresholdText = status.threshold 
+
+          const thresholdText = status.threshold
             ? `${status.threshold.requestCount}/${status.threshold.requestLimit} (${status.threshold.percentageUsed.toFixed(1)}%)`
             : 'Not yet checked';
-          
+
           message = [
             `Rate Limiter Status:`,
             `- Active requests: ${status.activeRequests}/${status.maxConcurrentRequests}`,
@@ -653,11 +657,11 @@ export class AutotaskToolHandler {
           ].filter(Boolean).join('\n');
           break;
         }
-
+```typescript
         case 'autotask_get_default_resource': {
           const resourceId = this.autotaskService.getDefaultResourceId();
           const cacheInfo = this.autotaskService.getApiUserCache();
-          
+
           if (resourceId && cacheInfo) {
             result = {
               resourceId: resourceId,
@@ -672,7 +676,7 @@ export class AutotaskToolHandler {
           }
           break;
         }
-
+```
         case 'autotask_test_connection': {
           const connectionResult = await this.autotaskService.testConnection();
           result = { success: connectionResult };

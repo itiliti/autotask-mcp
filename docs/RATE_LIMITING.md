@@ -1,3 +1,4 @@
+```
 # API Rate Limiting Implementation
 
 ## Overview
@@ -251,3 +252,4 @@ const queryOptions = {
 - **Version**: 3.0.3
 - **Build Date**: 12/15/2025, 6:02:07 PM
 - **Status**: ✅ Build successful, no vulnerabilities
+```

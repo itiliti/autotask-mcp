@@ -12,6 +12,7 @@ import {
   PageSizeLimitedSchema,
   SearchTermSchema,
   PositiveIdSchema,
+  NonNegativeIdSchema,
   DateStringSchema,
   createStringSchema,
 } from './common.schemas.js';
@@ -40,7 +41,7 @@ export type SearchProjectsInput = z.infer<typeof SearchProjectsInputSchema>;
  */
 export const CreateProjectInputSchema = z
   .object({
-    companyID: PositiveIdSchema,
+    companyID: NonNegativeIdSchema.describe('Company ID (0 = default/system company)'),
     projectName: createStringSchema(100, 'Project name', true) as z.ZodString,
     description: createStringSchema(8000, 'Project description', false),
     status: PositiveIdSchema,

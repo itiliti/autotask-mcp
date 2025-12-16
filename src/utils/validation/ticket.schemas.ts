@@ -12,6 +12,7 @@ import {
   PageSizeStandardSchema,
   SearchTermSchema,
   PositiveIdSchema,
+  NonNegativeIdSchema,
   BooleanFilterSchema,
   ISODateTimeSchema,
   createStringSchema,
@@ -32,7 +33,7 @@ import {
 export const SearchTicketsInputSchema = z
   .object({
     searchTerm: SearchTermSchema,
-    companyID: PositiveIdSchema.optional(),
+    companyID: NonNegativeIdSchema.optional().describe('Company ID (0 = default/system company)'),
     status: PositiveIdSchema.describe(
       'Ticket status ID. Open statuses: 1=New, 2=In Progress, 7=Waiting Customer, 8=Waiting Vendor, 9=Escalated. Closed statuses: 5=Complete, 20=Inactive, 21=Cancelled, 24=Rejected, 26=Internal Rejected, 27=Client Rejected. Omit to search only open tickets.'
     ).optional(),
@@ -73,7 +74,7 @@ export type GetTicketDetailsInput = z.infer<typeof GetTicketDetailsInputSchema>;
  */
 export const CreateTicketInputSchema = z
   .object({
-    companyID: PositiveIdSchema,
+    companyID: NonNegativeIdSchema.describe('Company ID (0 = default/system company)'),
     title: createStringSchema(255, 'Ticket title', true) as z.ZodString,
     description: createStringSchema(8000, 'Ticket description', true) as z.ZodString,
     status: PositiveIdSchema.optional(),

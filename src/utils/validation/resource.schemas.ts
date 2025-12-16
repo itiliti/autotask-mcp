@@ -17,6 +17,11 @@ import { PageSizeMediumSchema, SearchTermSchema, BooleanFilterSchema } from './c
 export const SearchResourcesInputSchema = z
   .object({
     searchTerm: SearchTermSchema,
+    email: z
+      .string()
+      .email('Must be a valid email address')
+      .optional()
+      .describe('Filter resources by email address (exact match)'),
     isActive: BooleanFilterSchema,
     resourceType: z
       .number()
