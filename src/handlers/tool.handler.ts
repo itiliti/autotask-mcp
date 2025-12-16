@@ -8,7 +8,7 @@
 import { AutotaskService } from '../services/autotask.service.js';
 import { Logger } from '../utils/logger.js';
 import { McpTool, McpToolResult } from '../types/mcp.js';
-import { ToolRegistry, allToolRegistrars } from './tools/index.js';
+import { ToolRegistry, getEnabledToolRegistrars, getEnabledModules } from './tools/index.js';
 
 export class AutotaskToolHandler {
   protected autotaskService: AutotaskService;
@@ -25,12 +25,14 @@ export class AutotaskToolHandler {
       logger: this.logger,
     });
 
-    // Register all tools from all modules
-    for (const registrar of allToolRegistrars) {
+    // Register tools from enabled modules only (respects AUTOTASK_ENABLED_TOOLS / AUTOTASK_DISABLED_TOOLS)
+    const enabledRegistrars = getEnabledToolRegistrars();
+    for (const registrar of enabledRegistrars) {
       this.registry.registerAll(registrar);
     }
 
-    this.logger.info(`Tool registry initialized with ${this.registry.size} tools`);
+    const enabledModules = getEnabledModules();
+    this.logger.info(`Tool registry initialized with ${this.registry.size} tools from ${enabledModules.length} modules: ${enabledModules.join(', ')}`);
   }
 
   /**

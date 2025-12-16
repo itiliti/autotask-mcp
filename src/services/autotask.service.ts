@@ -325,6 +325,8 @@ export class AutotaskService {
     // Execute request with rate limiting
     return this.rateLimiter.executeWithRateLimit(request, endpoint);
   }
+
+  /**
    * Resolve pagination options with safe defaults
    *
    * @param options - Query options with optional pageSize
