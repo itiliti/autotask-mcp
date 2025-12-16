@@ -1,40 +1,63 @@
-ww2*
-docs_ag2*
-prompt_logs/
-plans/
-PROJECT_SUMMARY.md
-ENTITY_EXPANSION_SUMMARY.md
-QUICK_START_CLAUDE.md
-demo.sh
-test-claude-connection.js
-test-stdout-clean.js
+# Dependencies
 node_modules/
+
+# Build outputs
 dist/
 build/
+*.tgz
+*.tar.gz
+
+# Environment files
 .env
 .env.*
 !.env.example
+
+# IDE and Editor files
+.vscode/
+.idea/
+.DS_Store
+
+# Logs
 *.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-.DS_Store
-.vscode/
-.idea/
-*.tgz
-*.tar.gz
+
+# Test coverage
 coverage/
 .nyc_output/
-# Summary documents for internal reference
+
+# Temporary and local files
+ww2*
+docs_ag2*
+prompt_logs/
+plans/
+demo.sh
+test-claude-connection.js
+test-stdout-clean.js
+
+# Project documentation (internal reference)
+PROJECT_SUMMARY.md
+ENTITY_EXPANSION_SUMMARY.md
+QUICK_START_CLAUDE.md
 DATA_OPTIMIZATION_SUMMARY.md
 NEW_ENTITIES_SUMMARY.md
-
-# Local-only assistant guide
 WARP.md
+
+# Build artifacts
+src/utils/build-info.ts
+
+# Backup files
+.backups/
+*.backup
+*.backup-*
+
+# Assistant configuration
 .claude/settings.local.json
 # Include .claude/plans directory for tracking feature plans
 !.claude/plans/
-# BMAD (local only)
+
+# Local development tools
 .smithery/
 .envrc
 .codex/sessions
@@ -42,10 +65,3 @@ WARP.md
 .codex/config.toml
 .codex/version.json
 .codex/history.jsonl
-
-# Backup files
-.backups/
-*.backup
-*.backup-*
-
-src/utils/build-info.ts
