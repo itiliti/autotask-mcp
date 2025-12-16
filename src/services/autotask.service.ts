@@ -2,6 +2,7 @@
 // Wraps the autotask-node client with our specific types and error handling
 
 import { AutotaskClient } from 'autotask-node';
+import { RateLimiterService, ThresholdInfo } from './rate-limiter.service.js';
 import {
   AutotaskCompany,
   AutotaskContact,
@@ -30,6 +31,7 @@ import { McpServerConfig } from '../types/mcp';
 import { Logger } from '../utils/logger';
 import { TicketMetadataCache } from './ticket-metadata.cache.js';
 import { ErrorMapper } from '../utils/error-mapper.js';
+import { ApiUserCacheService } from './api-user-cache.service.js';
 
 export class AutotaskService {
   private client: AutotaskClient | null = null;
@@ -37,11 +39,22 @@ export class AutotaskService {
   private config: McpServerConfig;
   private initializationPromise: Promise<void> | null = null;
   private metadataCache: TicketMetadataCache;
+  private rateLimiter: RateLimiterService;
+  private apiUserCache: ApiUserCacheService;
+  private defaultResourceId: number | null = null;
 
   constructor(config: McpServerConfig, logger: Logger) {
     this.config = config;
     this.logger = logger;
     this.metadataCache = new TicketMetadataCache(logger);
+    this.rateLimiter = new RateLimiterService(logger, {
+      maxConcurrentRequests: 2,
+      thresholdCheckInterval: 19, // Check every 19 API calls
+      highUsageThreshold: 50, // Warn at 50% usage
+      criticalUsageThreshold: 80, // Force check at 80% usage
+      minimumCallsRemaining: 100, // Block when <100 calls remaining
+    });
+    this.apiUserCache = new ApiUserCacheService(logger);
   }
 
   /**
@@ -75,6 +88,9 @@ export class AutotaskService {
       // Initialize metadata cache
       this.metadataCache.setClient(this.client);
       await this.metadataCache.initialize();
+
+      // Initialize default resource ID (API user)
+      await this.initializeDefaultResourceId();
     } catch (error) {
       this.logger.error('Failed to initialize Autotask client:', error);
       throw error;
@@ -124,6 +140,134 @@ export class AutotaskService {
   async ensureMetadataCacheInitialized(): Promise<void> {
     // Ensure client is initialized first (which initializes the cache)
     await this.ensureClient();
+  }
+
+  /**
+   * Check API usage thresholds and update rate limiter
+   * https://autotask.net/help/developerhelp/Content/APIs/REST/General_Topics/REST_Thresholds_Limits.htm
+   */
+  private async checkThresholds(): Promise<ThresholdInfo | null> {
+    try {
+      const client = await this.ensureClient();
+      this.rateLimiter.startThresholdCheck();
+
+      // Call the thresholdInformation endpoint
+      const response = await (client as any).request({
+        method: 'GET',
+        url: '/v1.0/Internal/thresholdInformation',
+      });
+
+      if (response && response.data) {
+        const data = response.data;
+        
+        // Parse threshold information
+        const thresholdInfo: ThresholdInfo = {
+          requestCount: data.requestCount || 0,
+          requestLimit: data.requestLimit || 10000,
+          percentageUsed: data.requestLimit > 0 
+            ? (data.requestCount / data.requestLimit) * 100 
+            : 0,
+          timeRemaining: data.timeRemaining || 'Unknown',
+        };
+
+        // Update rate limiter with threshold info
+        await this.rateLimiter.updateThresholdInfo(thresholdInfo);
+        
+        return thresholdInfo;
+      }
+
+      return null;
+    } catch (error) {
+      this.logger.warn('Failed to check API thresholds:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Get current rate limiter status (for monitoring/debugging)
+   */
+  getRateLimiterStatus() {
+    return this.rateLimiter.getStatus();
+  }
+
+  /**
+   * Initialize the default resource ID from the API user email
+   * Uses cache to avoid lookups on every startup
+   */
+  private async initializeDefaultResourceId(): Promise<void> {
+    try {
+      const apiUserEmail = this.config.autotask.username;
+      
+      if (!apiUserEmail) {
+        this.logger.warn('No API user email configured, cannot initialize default resource ID');
+        return;
+      }
+      
+      // Check cache first
+      const cachedResourceId = await this.apiUserCache.getCachedResourceId(apiUserEmail);
+      if (cachedResourceId) {
+        this.defaultResourceId = cachedResourceId;
+        this.logger.info(`Default resource ID: ${cachedResourceId} (from cache)`);
+        return;
+      }
+
+      // Cache miss - look up resource by email
+      this.logger.info(`Looking up resource ID for API user: ${apiUserEmail}`);
+      const resources = await this.searchResources({ pageSize: -1 });
+      
+      const apiUserResource = resources.find(
+        (r) => r.email?.toLowerCase() === apiUserEmail.toLowerCase()
+      );
+
+      if (apiUserResource && apiUserResource.id) {
+        this.defaultResourceId = apiUserResource.id;
+        const resourceName = `${apiUserResource.firstName || ''} ${apiUserResource.lastName || ''}`.trim() || 'Unknown';
+        
+        // Cache for future use
+        await this.apiUserCache.saveResourceId(apiUserEmail, apiUserResource.id, resourceName);
+        
+        this.logger.info(`Default resource ID: ${this.defaultResourceId} (${resourceName})`);
+      } else {
+        this.logger.warn(`Could not find resource for API user email: ${apiUserEmail}`);
+      }
+    } catch (error) {
+      this.logger.warn('Failed to initialize default resource ID:', error);
+      // Non-fatal - operations can still work without default resource
+    }
+  }
+
+  /**
+   * Get the default resource ID (API user)
+   * Returns null if not initialized or not found
+   */
+  getDefaultResourceId(): number | null {
+    return this.defaultResourceId;
+  }
+
+  /**
+   * Get API user cache information
+   */
+  getApiUserCache() {
+    return this.apiUserCache.getCache();
+  }
+
+  /**
+   * Execute API request with rate limiting and threshold monitoring
+   */
+  private async executeWithRateLimit<T>(
+    request: () => Promise<T>,
+    endpoint?: string
+  ): Promise<T> {
+    // Check if we should update thresholds
+    if (this.rateLimiter.shouldCheckThresholds()) {
+      // Fire and forget - don't block the request
+      this.checkThresholds().catch((error) => {
+        this.logger.debug('Threshold check failed (non-blocking):', error);
+      });
+    }
+
+    // Execute request with rate limiting
+    return this.rateLimiter.executeWithRateLimit(request, endpoint);
   }
 
   /**
@@ -177,14 +321,16 @@ export class AutotaskService {
   async getCompany(id: number): Promise<AutotaskCompany | null> {
     const client = await this.ensureClient();
 
-    try {
-      this.logger.debug(`Getting company with ID: ${id}`);
-      const result = await client.accounts.get(id);
-      return (result.data as AutotaskCompany) || null;
-    } catch (error) {
-      this.logger.error(`Failed to get company ${id}:`, error);
-      throw error;
-    }
+    return this.executeWithRateLimit(async () => {
+      try {
+        this.logger.debug(`Getting company with ID: ${id}`);
+        const result = await client.accounts.get(id);
+        return (result.data as AutotaskCompany) || null;
+      } catch (error) {
+        this.logger.error(`Failed to get company ${id}:`, error);
+        throw error;
+      }
+    }, 'Companies');
   }
 
   /**
@@ -201,58 +347,59 @@ export class AutotaskService {
   async searchCompanies(options: AutotaskQueryOptionsExtended = {}): Promise<AutotaskCompany[]> {
     const client = await this.ensureClient();
 
-    try {
-      this.logger.debug('Searching companies with options:', options);
+    return this.executeWithRateLimit(async () => {
+      try {
+        this.logger.debug('Searching companies with options:', options);
 
-      // Resolve pagination with safe defaults
-      const { pageSize, unlimited } = this.resolvePaginationOptions(options, 50);
+        // Resolve pagination with safe defaults
+        const { pageSize, unlimited } = this.resolvePaginationOptions(options, 50);
 
-      // Build proper filter array for Autotask API
-      const filters: any[] = [];
+        // Build proper filter array for Autotask API
+        const filters: any[] = [];
 
-      if (options.searchTerm) {
-        filters.push({
-          op: 'contains',
-          field: 'companyName',
-          value: options.searchTerm,
-        });
-      }
+        if (options.searchTerm) {
+          filters.push({
+            op: 'contains',
+            field: 'companyName',
+            value: options.searchTerm,
+          });
+        }
 
-      if (options.isActive !== undefined) {
-        filters.push({
-          op: 'eq',
-          field: 'isActive',
-          value: options.isActive,
-        });
-      }
+        if (options.isActive !== undefined) {
+          filters.push({
+            op: 'eq',
+            field: 'isActive',
+            value: options.isActive,
+          });
+        }
 
-      // Default filter if none provided (required by Autotask API)
-      if (filters.length === 0) {
-        filters.push({
-          op: 'gte',
-          field: 'id',
-          value: 0,
-        });
-      }
+        // Default filter if none provided (required by Autotask API)
+        if (filters.length === 0) {
+          filters.push({
+            op: 'gte',
+            field: 'id',
+            value: 0,
+          });
+        }
 
-      if (unlimited) {
-        // Unlimited mode: fetch ALL companies via pagination
-        const allCompanies: AutotaskCompany[] = [];
-        const batchSize = 500; // Use max safe page size for efficiency
-        let currentPage = 1;
-        let hasMorePages = true;
+        if (unlimited) {
+          // Unlimited mode: fetch ALL companies via pagination
+          const allCompanies: AutotaskCompany[] = [];
+          const batchSize = 500; // Use max safe page size for efficiency
+          let currentPage = 1;
+          let hasMorePages = true;
 
-        while (hasMorePages) {
-          const queryOptions = {
-            filter: filters,
-            pageSize: batchSize,
-            page: currentPage,
-          };
+          while (hasMorePages) {
+            const queryOptions = {
+              filter: filters,
+              pageSize: batchSize,
+              page: currentPage,
+            };
 
-          this.logger.debug(`Fetching companies page ${currentPage}...`);
+            this.logger.debug(`Fetching companies page ${currentPage}...`);
 
-          const result = await client.accounts.list(queryOptions as any);
-          const companies = (result.data as AutotaskCompany[]) || [];
+            const result = await client.accounts.list(queryOptions as any);
+            const companies = (result.data as AutotaskCompany[]) || [];
 
           if (companies.length === 0) {
             hasMorePages = false;
@@ -299,10 +446,11 @@ export class AutotaskService {
         this.logger.info(`Retrieved ${companies.length} companies (pageSize: ${pageSize})`);
         return companies;
       }
-    } catch (error) {
-      this.logger.error('Failed to search companies:', error);
-      throw error;
-    }
+      } catch (error) {
+        this.logger.error('Failed to search companies:', error);
+        throw error;
+      }
+    }, 'Companies');
   }
 
   async createCompany(company: Partial<AutotaskCompany>): Promise<number> {
@@ -337,14 +485,16 @@ export class AutotaskService {
   async getContact(id: number): Promise<AutotaskContact | null> {
     const client = await this.ensureClient();
 
-    try {
-      this.logger.debug(`Getting contact with ID: ${id}`);
-      const result = await client.contacts.get(id);
-      return (result.data as AutotaskContact) || null;
-    } catch (error) {
-      this.logger.error(`Failed to get contact ${id}:`, error);
-      throw error;
-    }
+    return this.executeWithRateLimit(async () => {
+      try {
+        this.logger.debug(`Getting contact with ID: ${id}`);
+        const result = await client.contacts.get(id);
+        return (result.data as AutotaskContact) || null;
+      } catch (error) {
+        this.logger.error(`Failed to get contact ${id}:`, error);
+        throw error;
+      }
+    }, 'Contacts');
   }
 
   /**
@@ -474,22 +624,24 @@ export class AutotaskService {
   async getTicket(id: number, fullDetails: boolean = false): Promise<AutotaskTicket | null> {
     const client = await this.ensureClient();
 
-    try {
-      this.logger.debug(`Getting ticket with ID: ${id}, fullDetails: ${fullDetails}`);
+    return this.executeWithRateLimit(async () => {
+      try {
+        this.logger.debug(`Getting ticket with ID: ${id}, fullDetails: ${fullDetails}`);
 
-      const result = await client.tickets.get(id);
-      const ticket = result.data as AutotaskTicket;
+        const result = await client.tickets.get(id);
+        const ticket = result.data as AutotaskTicket;
 
-      if (!ticket) {
-        return null;
+        if (!ticket) {
+          return null;
+        }
+
+        // Apply optimization unless full details requested
+        return fullDetails ? ticket : this.optimizeTicketData(ticket);
+      } catch (error) {
+        this.logger.error(`Failed to get ticket ${id}:`, error);
+        throw error;
       }
-
-      // Apply optimization unless full details requested
-      return fullDetails ? ticket : this.optimizeTicketData(ticket);
-    } catch (error) {
-      this.logger.error(`Failed to get ticket ${id}:`, error);
-      throw error;
-    }
+    }, 'Tickets');
   }
 
   /**
@@ -509,8 +661,9 @@ export class AutotaskService {
   async searchTickets(options: AutotaskQueryOptionsExtended = {}): Promise<AutotaskTicket[]> {
     const client = await this.ensureClient();
 
-    try {
-      this.logger.debug('Searching tickets with options:', options);
+    return this.executeWithRateLimit(async () => {
+      try {
+        this.logger.debug('Searching tickets with options:', options);
 
       // Build proper filter array for Autotask API
       const filters: any[] = [];
@@ -590,6 +743,29 @@ export class AutotaskService {
       // Resolve pagination with safe defaults
       const { pageSize, unlimited } = this.resolvePaginationOptions(options, 50);
 
+      // Define essential fields to request from API (reduces response size significantly)
+      const essentialFields = [
+        'id',
+        'ticketNumber',
+        'title',
+        'description',
+        'status',
+        'priority',
+        'companyID',
+        'contactID',
+        'assignedResourceID',
+        'createDate',
+        'lastActivityDate',
+        'dueDateTime',
+        'completedDate',
+        'estimatedHours',
+        'ticketType',
+        'source',
+        'issueType',
+        'subIssueType',
+        'resolution',
+      ];
+
       if (unlimited) {
         // Unlimited mode: fetch ALL tickets via pagination
         const allTickets: AutotaskTicket[] = [];
@@ -602,6 +778,7 @@ export class AutotaskService {
             filter: filters,
             pageSize: batchSize,
             page: currentPage,
+            includeFields: essentialFields,
           };
 
           this.logger.debug(`Fetching tickets page ${currentPage} with filter:`, filters);
@@ -637,6 +814,7 @@ export class AutotaskService {
         const queryOptions = {
           filter: filters,
           pageSize: pageSize!,
+          includeFields: essentialFields,
         };
 
         this.logger.debug('Single page ticket request:', queryOptions);
@@ -657,10 +835,11 @@ export class AutotaskService {
         this.logger.info(`Retrieved ${optimizedTickets.length} tickets (pageSize: ${pageSize})`);
         return optimizedTickets;
       }
-    } catch (error) {
-      this.logger.error('Failed to search tickets:', error);
-      throw error;
-    }
+      } catch (error) {
+        this.logger.error('Failed to search tickets:', error);
+        throw error;
+      }
+    }, 'Tickets');
   }
 
   /**
@@ -856,14 +1035,16 @@ export class AutotaskService {
   async getProject(id: number): Promise<AutotaskProject | null> {
     const client = await this.ensureClient();
 
-    try {
-      this.logger.debug(`Getting project with ID: ${id}`);
-      const result = await client.projects.get(id);
-      return (result.data as unknown as AutotaskProject) || null;
-    } catch (error) {
-      this.logger.error(`Failed to get project ${id}:`, error);
-      throw error;
-    }
+    return this.executeWithRateLimit(async () => {
+      try {
+        this.logger.debug(`Getting project with ID: ${id}`);
+        const result = await client.projects.get(id);
+        return (result.data as unknown as AutotaskProject) || null;
+      } catch (error) {
+        this.logger.error(`Failed to get project ${id}:`, error);
+        throw error;
+      }
+    }, 'Projects');
   }
 
   /**
