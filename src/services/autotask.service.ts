@@ -193,6 +193,8 @@ export class AutotaskService {
   /**
    * Initialize the default resource ID from the API user email
    * Uses cache to avoid lookups on every startup
+   * 
+   * NOTE: Currently skipping cache to debug incorrect cached resourceID
    */
   private async initializeDefaultResourceId(): Promise<void> {
     try {
@@ -203,23 +205,43 @@ export class AutotaskService {
         return;
       }
       
-      // Check cache first
-      const cachedResourceId = await this.apiUserCache.getCachedResourceId(apiUserEmail);
-      if (cachedResourceId) {
-        this.defaultResourceId = cachedResourceId;
-        this.logger.info(`Default resource ID: ${cachedResourceId} (from cache)`);
-        return;
-      }
+      // TEMPORARILY SKIP CACHE - debugging incorrect cached resourceID
+      // const cachedResourceId = await this.apiUserCache.getCachedResourceId(apiUserEmail);
+      // if (cachedResourceId) {
+      //   this.defaultResourceId = cachedResourceId;
+      //   this.logger.info(`Default resource ID: ${cachedResourceId} (from cache)`);
+      //   return;
+      // }
 
-      // Cache miss - look up resource by email using API filter
-      this.logger.info(`Looking up resource ID for API user: ${apiUserEmail}`);
+      // Look up resource by email using API filter
+      this.logger.info(`Looking up resource ID for API user: ${apiUserEmail} (cache bypassed)`);
       let resources = await this.searchResources({ email: apiUserEmail, pageSize: 1 } as any);
+      
+      if (resources.length > 0) {
+        this.logger.info(`Found resource by email search:`, {
+          id: resources[0].id,
+          email: resources[0].email,
+          userName: resources[0].userName,
+          firstName: resources[0].firstName,
+          lastName: resources[0].lastName,
+        });
+      }
       
       // If no resource found by email, fall back to first active resource
       // (API user email may not match any resource email in Autotask)
       if (resources.length === 0) {
         this.logger.info('No resource found with API user email, falling back to first active resource');
         resources = await this.searchResources({ pageSize: 1 } as any);
+        
+        if (resources.length > 0) {
+          this.logger.info(`Fallback found resource:`, {
+            id: resources[0].id,
+            email: resources[0].email,
+            userName: resources[0].userName,
+            firstName: resources[0].firstName,
+            lastName: resources[0].lastName,
+          });
+        }
       }
       
       const apiUserResource = resources.length > 0 ? resources[0] : null;
@@ -228,10 +250,10 @@ export class AutotaskService {
         this.defaultResourceId = apiUserResource.id;
         const resourceName = `${apiUserResource.firstName || ''} ${apiUserResource.lastName || ''}`.trim() || 'Unknown';
         
-        // Cache for future use
-        await this.apiUserCache.saveResourceId(apiUserEmail, apiUserResource.id, resourceName);
+        // DON'T cache for now - debugging
+        // await this.apiUserCache.saveResourceId(apiUserEmail, apiUserResource.id, resourceName);
         
-        this.logger.info(`Default resource ID: ${this.defaultResourceId} (${resourceName})`);
+        this.logger.info(`Default resource ID: ${this.defaultResourceId} (${resourceName}) - NOT CACHED`);
       } else {
         this.logger.warn(`Could not find any active resource in Autotask`);
       }
