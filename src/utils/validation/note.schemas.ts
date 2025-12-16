@@ -8,7 +8,7 @@
  */
 
 import { z } from 'zod';
-import { PageSizeLimitedSchema, PositiveIdSchema, createStringSchema } from './common.schemas.js';
+import { PageSizeLimitedSchema, PositiveIdSchema, NonNegativeIdSchema, createStringSchema } from './common.schemas.js';
 
 /**
  * Get Ticket Note Tool Parameters
@@ -119,7 +119,7 @@ export type CreateProjectNoteInput = z.infer<typeof CreateProjectNoteInputSchema
  */
 export const GetCompanyNoteInputSchema = z
   .object({
-    companyId: PositiveIdSchema,
+    companyId: NonNegativeIdSchema.describe('Company ID (0 = default/system company)'),
     noteId: PositiveIdSchema,
   })
   .strict();
@@ -132,7 +132,7 @@ export type GetCompanyNoteInput = z.infer<typeof GetCompanyNoteInputSchema>;
  */
 export const SearchCompanyNotesInputSchema = z
   .object({
-    companyId: PositiveIdSchema,
+    companyId: NonNegativeIdSchema.describe('Company ID (0 = default/system company)'),
     pageSize: PageSizeLimitedSchema,
   })
   .strict();
@@ -145,7 +145,7 @@ export type SearchCompanyNotesInput = z.infer<typeof SearchCompanyNotesInputSche
  */
 export const CreateCompanyNoteInputSchema = z
   .object({
-    companyId: PositiveIdSchema,
+    companyId: NonNegativeIdSchema.describe('Company ID (0 = default/system company)'),
     title: createStringSchema(250, 'Note title', false),
     description: createStringSchema(32000, 'Note content', true) as z.ZodString,
     actionType: PositiveIdSchema.optional(),

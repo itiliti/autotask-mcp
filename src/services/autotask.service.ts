@@ -193,6 +193,8 @@ export class AutotaskService {
   /**
    * Initialize the default resource ID from the API user email
    * Uses cache to avoid lookups on every startup
+   * 
+   * NOTE: Currently skipping cache to debug incorrect cached resourceID
    */
   private async initializeDefaultResourceId(): Promise<void> {
     try {
@@ -203,23 +205,43 @@ export class AutotaskService {
         return;
       }
       
-      // Check cache first
-      const cachedResourceId = await this.apiUserCache.getCachedResourceId(apiUserEmail);
-      if (cachedResourceId) {
-        this.defaultResourceId = cachedResourceId;
-        this.logger.info(`Default resource ID: ${cachedResourceId} (from cache)`);
-        return;
-      }
+      // TEMPORARILY SKIP CACHE - debugging incorrect cached resourceID
+      // const cachedResourceId = await this.apiUserCache.getCachedResourceId(apiUserEmail);
+      // if (cachedResourceId) {
+      //   this.defaultResourceId = cachedResourceId;
+      //   this.logger.info(`Default resource ID: ${cachedResourceId} (from cache)`);
+      //   return;
+      // }
 
-      // Cache miss - look up resource by email using API filter
-      this.logger.info(`Looking up resource ID for API user: ${apiUserEmail}`);
+      // Look up resource by email using API filter
+      this.logger.info(`Looking up resource ID for API user: ${apiUserEmail} (cache bypassed)`);
       let resources = await this.searchResources({ email: apiUserEmail, pageSize: 1 } as any);
+      
+      if (resources.length > 0) {
+        this.logger.info(`Found resource by email search:`, {
+          id: resources[0].id,
+          email: resources[0].email,
+          userName: resources[0].userName,
+          firstName: resources[0].firstName,
+          lastName: resources[0].lastName,
+        });
+      }
       
       // If no resource found by email, fall back to first active resource
       // (API user email may not match any resource email in Autotask)
       if (resources.length === 0) {
         this.logger.info('No resource found with API user email, falling back to first active resource');
         resources = await this.searchResources({ pageSize: 1 } as any);
+        
+        if (resources.length > 0) {
+          this.logger.info(`Fallback found resource:`, {
+            id: resources[0].id,
+            email: resources[0].email,
+            userName: resources[0].userName,
+            firstName: resources[0].firstName,
+            lastName: resources[0].lastName,
+          });
+        }
       }
       
       const apiUserResource = resources.length > 0 ? resources[0] : null;
@@ -228,10 +250,10 @@ export class AutotaskService {
         this.defaultResourceId = apiUserResource.id;
         const resourceName = `${apiUserResource.firstName || ''} ${apiUserResource.lastName || ''}`.trim() || 'Unknown';
         
-        // Cache for future use
-        await this.apiUserCache.saveResourceId(apiUserEmail, apiUserResource.id, resourceName);
+        // DON'T cache for now - debugging
+        // await this.apiUserCache.saveResourceId(apiUserEmail, apiUserResource.id, resourceName);
         
-        this.logger.info(`Default resource ID: ${this.defaultResourceId} (${resourceName})`);
+        this.logger.info(`Default resource ID: ${this.defaultResourceId} (${resourceName}) - NOT CACHED`);
       } else {
         this.logger.warn(`Could not find any active resource in Autotask`);
       }
@@ -1839,18 +1861,28 @@ export class AutotaskService {
     try {
       this.logger.debug(`Creating ticket note:`, note);
 
-      // Note: Validation should happen in the tool handler before calling this method
-      // This service method enforces publish level and length checks at the API level
-
-      // Enforce publish level check (must be 1 or 3)
-      if (note.publish !== undefined && note.publish !== 1 && note.publish !== 3) {
-        const error = new Error(`Invalid publish level: ${note.publish}. Must be 1 (Internal) or 3 (External)`);
-        this.logger.error('Ticket note creation failed - invalid publish level:', error);
+      // ========================================
+      // REQUIRED FIELDS VALIDATION
+      // ========================================
+      // Per Autotask TicketNotes API documentation:
+      // https://autotask.net/help/developerhelp/Content/APIs/REST/Entities/TicketNotesEntity.htm
+      
+      // 1. ticketID - REQUIRED
+      if (!note.ticketID) {
+        const error = new Error('ticketID is required to create a ticket note');
+        this.logger.error('Ticket note creation failed - missing ticketID:', error);
         throw error;
       }
 
-      // Enforce description length check (max 32000 chars)
-      if (note.description && note.description.length > 32000) {
+      // 2. description - REQUIRED (note content)
+      if (!note.description || note.description.trim().length === 0) {
+        const error = new Error('description is required and cannot be empty');
+        this.logger.error('Ticket note creation failed - missing description:', error);
+        throw error;
+      }
+
+      // 3. Enforce description length check (max 32000 chars)
+      if (note.description.length > 32000) {
         const error = new Error(
           `Note description exceeds maximum length of 32000 characters. ` +
             `Current length: ${note.description.length}`,
@@ -1859,20 +1891,64 @@ export class AutotaskService {
         throw error;
       }
 
+      // 4. publish - REQUIRED (default to Internal Only if not specified)
+      const publish = note.publish ?? 1; // Default to 1 (Internal Only)
+      
+      // Enforce valid publish levels (1=Internal, 2=All Autotask Users, 3=Everyone)
+      if (publish !== 1 && publish !== 2 && publish !== 3) {
+        const error = new Error(
+          `Invalid publish level: ${publish}. Must be 1 (Internal Only), 2 (All Autotask Users), or 3 (Everyone)`
+        );
+        this.logger.error('Ticket note creation failed - invalid publish level:', error);
+        throw error;
+      }
+
+      // 5. noteType - Set default if not provided (1 = General note)
+      const noteType = note.noteType ?? 1;
+
       // Build PascalCase payload for Autotask REST API
-      // Note: Validation is performed by TicketUpdateValidator in the handler layer
+      // Note: TicketID is NOT in the payload - it's part of the child resource URL
       const payload: any = {
-        TicketID: note.ticketID,
-        Description: note.description?.trim() || '',
-        Publish: note.publish,
+        Description: note.description.trim(),
+        Publish: publish,
+        NoteType: noteType,
       };
 
+      // Title is conditionally required based on ticket category settings
+      // Include it if provided
       if (note.title && note.title.trim().length > 0) {
         payload.Title = note.title.trim();
       }
 
-      const result = await client.notes.create(payload);
-      const createdNote = result.data as AutotaskTicketNote;
+      // creatorResourceID - Optional, allows specifying which resource created the note
+      // If not provided, API will use the authenticated API user
+      if (note.creatorResourceID !== undefined) {
+        payload.CreatorResourceID = note.creatorResourceID;
+      }
+
+      // Use the correct child resource endpoint: /Tickets/{parentId}/Notes
+      // Per Autotask REST API, ticket notes are created as child resources
+      this.logger.debug(`Posting to /Tickets/${note.ticketID}/Notes with payload:`, payload);
+      const result = await (client as any).axios.post(`/Tickets/${note.ticketID}/Notes`, payload);
+      
+      // Extract the created note from response
+      // Child resource endpoints may return: { item: {...} }, { itemId: X }, or just the item
+      let createdNote: AutotaskTicketNote;
+      if (result.data.item) {
+        createdNote = result.data.item;
+      } else if (result.data.itemId) {
+        // Response only contains ID - construct minimal note object
+        createdNote = {
+          id: result.data.itemId,
+          ticketID: note.ticketID,
+          ...payload,
+        } as AutotaskTicketNote;
+      } else {
+        createdNote = result.data as AutotaskTicketNote;
+      }
+      
+      this.logger.info(`Ticket note created with ID: ${createdNote.id || 'unknown'}`);
+      this.logger.debug('Full response data:', result.data);
 
       this.logger.info(`Ticket note created with ID: ${createdNote.id}`);
       return createdNote;
@@ -2209,7 +2285,7 @@ export class AutotaskService {
 
       // Build filter based on provided options
       const filters: any[] = [];
-      if (options.companyId) {
+      if (options.companyId !== undefined) {
         filters.push({
           field: 'accountId',
           op: 'eq',

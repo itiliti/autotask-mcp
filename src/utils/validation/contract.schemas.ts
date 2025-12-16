@@ -8,7 +8,7 @@
  */
 
 import { z } from 'zod';
-import { PageSizeMediumSchema, SearchTermSchema, PositiveIdSchema } from './common.schemas.js';
+import { PageSizeMediumSchema, SearchTermSchema, NonNegativeIdSchema } from './common.schemas.js';
 
 /**
  * Search Contracts Tool Parameters
@@ -17,7 +17,7 @@ import { PageSizeMediumSchema, SearchTermSchema, PositiveIdSchema } from './comm
 export const SearchContractsInputSchema = z
   .object({
     searchTerm: SearchTermSchema,
-    companyID: PositiveIdSchema.optional(),
+    companyID: NonNegativeIdSchema.optional().describe('Company ID (0 = default/system company)'),
     status: z
       .number()
       .int()

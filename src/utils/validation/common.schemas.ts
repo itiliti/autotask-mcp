@@ -82,9 +82,19 @@ export const ISODateTimeSchema = z
   .datetime({ message: 'Must be ISO 8601 format (e.g., 2025-09-17T16:30:00Z)' });
 
 /**
- * Positive integer ID
+ * Positive integer ID (must be > 0)
+ * Use this for entity IDs that cannot be 0
  */
 export const PositiveIdSchema = z.number().int('ID must be an integer').positive('ID must be a positive integer');
+
+/**
+ * Non-negative integer ID (can be >= 0)
+ * Use this for IDs that allow 0 as a valid value (e.g., companyID: 0 = default/system company)
+ */
+export const NonNegativeIdSchema = z
+  .number()
+  .int('ID must be an integer')
+  .nonnegative('ID must be 0 or a positive integer');
 
 /**
  * Search term string

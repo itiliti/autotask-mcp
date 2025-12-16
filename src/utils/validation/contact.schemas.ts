@@ -12,6 +12,7 @@ import {
   PageSizeStandardSchema,
   SearchTermSchema,
   PositiveIdSchema,
+  NonNegativeIdSchema,
   PhoneSchema,
   EmailSchema,
   createStringSchema,
@@ -46,7 +47,7 @@ export type SearchContactsInput = z.infer<typeof SearchContactsInputSchema>;
  */
 export const CreateContactInputSchema = z
   .object({
-    companyID: PositiveIdSchema,
+    companyID: NonNegativeIdSchema.describe('Company ID (0 = default/system company)'),
     firstName: createStringSchema(50, 'First name', true) as z.ZodString,
     lastName: createStringSchema(50, 'Last name', true) as z.ZodString,
     emailAddress: EmailSchema.optional(),
