@@ -11,6 +11,7 @@ import { ContactService } from './entities/contact.service.js';
 import { ResourceService } from './entities/resource.service.js';
 import { ConfigurationItemService } from './entities/configuration-item.service.js';
 import { QuoteService } from './entities/quote.service.js';
+import { ExpenseService } from './entities/expense.service.js';
 import {
   AutotaskCompany,
   AutotaskContact,
@@ -60,6 +61,7 @@ export class AutotaskService {
   private _resourceService: ResourceService | null = null;
   private _configurationItemService: ConfigurationItemService | null = null;
   private _quoteService: QuoteService | null = null;
+  private _expenseService: ExpenseService | null = null;
 
   constructor(config: McpServerConfig, logger: Logger) {
     this.config = config;
@@ -454,6 +456,16 @@ export class AutotaskService {
       this._quoteService = new QuoteService(this.getServiceContext());
     }
     return this._quoteService;
+  }
+
+  /**
+   * Get the ExpenseService instance (lazy-initialized)
+   */
+  private get expenseService(): ExpenseService {
+    if (!this._expenseService) {
+      this._expenseService = new ExpenseService(this.getServiceContext());
+    }
+    return this._expenseService;
   }
 
   // ============================================================================
@@ -1662,102 +1674,32 @@ export class AutotaskService {
     }
   }
 
-  // Expense entities
+  // Expense operations - delegated to ExpenseService
   async getExpenseReport(id: number): Promise<AutotaskExpenseReport | null> {
-    const client = await this.ensureClient();
-
-    try {
-      this.logger.debug(`Getting expense report with ID: ${id}`);
-      const result = await client.expenses.get(id);
-      return (result.data as unknown as AutotaskExpenseReport) || null;
-    } catch (error) {
-      this.logger.error(`Failed to get expense report ${id}:`, error);
-      throw error;
-    }
+    return this.expenseService.getExpenseReport(id);
   }
 
-  /**
-   * Search for expense reports with safe pagination defaults
-   *
-   * @param options - Search options with optional pageSize
-   * @returns Array of expense reports
-   *
-   * Pagination behavior (v2.0.0+):
-   * - No pageSize specified: Returns 25 expense reports (safe default)
-   * - pageSize: N (1-500): Returns up to N reports
-   * - pageSize: -1: Returns up to 500 reports
-   */
   async searchExpenseReports(options: AutotaskQueryOptionsExtended = {}): Promise<AutotaskExpenseReport[]> {
-    const client = await this.ensureClient();
-
-    try {
-      this.logger.debug('Searching expense reports with options:', options);
-
-      // Resolve pagination with safe defaults
-      const { pageSize, unlimited } = this.resolvePaginationOptions(options, 25);
-
-      // Build filter based on provided options
-      const filters: any[] = [];
-      if (options.submitterId) {
-        filters.push({
-          field: 'resourceId',
-          op: 'eq',
-          value: options.submitterId,
-        });
-      }
-      if (options.status) {
-        filters.push({ field: 'status', op: 'eq', value: options.status });
-      }
-
-      const queryOptions = {
-        filter: filters.length > 0 ? filters : [{ field: 'id', op: 'gte', value: 0 }],
-        pageSize: unlimited ? 500 : pageSize!,
-      };
-
-      const result = await client.expenses.list(queryOptions);
-      const reports = (result.data as any[]) || [];
-
-      this.logger.info(`Retrieved ${reports.length} expense reports (pageSize: ${pageSize || 'unlimited'})`);
-      return reports as AutotaskExpenseReport[];
-    } catch (error) {
-      this.logger.error('Failed to search expense reports:', error);
-      throw error;
-    }
+    return this.expenseService.searchExpenseReports(options);
   }
 
   async createExpenseReport(report: Partial<AutotaskExpenseReport>): Promise<number> {
-    const client = await this.ensureClient();
-
-    try {
-      this.logger.debug('Creating expense report:', report);
-      const result = await client.expenses.create(report as any);
-      const reportId = (result.data as any)?.id;
-      this.logger.info(`Expense report created with ID: ${reportId}`);
-      return reportId;
-    } catch (error) {
-      this.logger.error('Failed to create expense report:', error);
-      throw error;
-    }
+    return this.expenseService.createExpenseReport(report);
   }
 
-  // For expense items, we'll need to use a different approach since they're child entities
-  // This is a placeholder - actual implementation may vary based on API structure
-  async getExpenseItem(_expenseId: number, _itemId: number): Promise<AutotaskExpenseItem | null> {
-    // This would need to be implemented based on the actual API structure for child items
-    throw new Error('Expense items API not yet implemented - requires child entity handling');
+  async getExpenseItem(expenseId: number, itemId: number): Promise<AutotaskExpenseItem | null> {
+    return this.expenseService.getExpenseItem(expenseId, itemId);
   }
 
   async searchExpenseItems(
-    _expenseId: number,
-    _options: AutotaskQueryOptionsExtended = {},
+    expenseId: number,
+    options: AutotaskQueryOptionsExtended = {},
   ): Promise<AutotaskExpenseItem[]> {
-    // This would need to be implemented based on the actual API structure for child items
-    throw new Error('Expense items API not yet implemented - requires child entity handling');
+    return this.expenseService.searchExpenseItems(expenseId, options);
   }
 
-  async createExpenseItem(_expenseId: number, _item: Partial<AutotaskExpenseItem>): Promise<number> {
-    // This would need to be implemented based on the actual API structure for child items
-    throw new Error('Expense items API not yet implemented - requires child entity handling');
+  async createExpenseItem(expenseId: number, item: Partial<AutotaskExpenseItem>): Promise<number> {
+    return this.expenseService.createExpenseItem(expenseId, item);
   }
 
   // Quote operations - delegated to QuoteService
