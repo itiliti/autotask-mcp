@@ -16,6 +16,7 @@ import { TimeEntryService } from './entities/time-entry.service.js';
 import { ProjectService } from './entities/project.service.js';
 import { TaskService } from './entities/task.service.js';
 import { TicketService } from './entities/ticket.service.js';
+import { AttachmentService } from './entities/attachment.service.js';
 import {
   AutotaskCompany,
   AutotaskContact,
@@ -69,6 +70,7 @@ export class AutotaskService {
   private _projectService: ProjectService | null = null;
   private _taskService: TaskService | null = null;
   private _ticketService: TicketService | null = null;
+  private _attachmentService: AttachmentService | null = null;
 
   constructor(config: McpServerConfig, logger: Logger) {
     this.config = config;
@@ -515,6 +517,13 @@ export class AutotaskService {
     return this._ticketService;
   }
 
+  private get attachmentService(): AttachmentService {
+    if (!this._attachmentService) {
+      this._attachmentService = new AttachmentService(this.getServiceContext());
+    }
+    return this._attachmentService;
+  }
+
   // ============================================================================
   // ENTITY OPERATIONS
   // ============================================================================
@@ -802,58 +811,20 @@ export class AutotaskService {
     return this.companyService.createCompanyNote(companyId, note);
   }
 
-  // Attachment entities - Using the generic attachments endpoint
+  // Attachment operations - delegated to AttachmentService
   async getTicketAttachment(
     ticketId: number,
     attachmentId: number,
     includeData: boolean = false,
   ): Promise<AutotaskTicketAttachment | null> {
-    const client = await this.ensureClient();
-
-    try {
-      this.logger.debug(
-        `Getting ticket attachment - TicketID: ${ticketId}, AttachmentID: ${attachmentId}, includeData: ${includeData}`,
-      );
-
-      // Search for attachment by parent ID and attachment ID
-      const result = await client.attachments.list({
-        filter: [
-          { field: 'parentId', op: 'eq', value: ticketId },
-          { field: 'id', op: 'eq', value: attachmentId },
-        ],
-      });
-
-      const attachments = (result.data as any[]) || [];
-      return attachments.length > 0 ? (attachments[0] as AutotaskTicketAttachment) : null;
-    } catch (error) {
-      this.logger.error(`Failed to get ticket attachment ${attachmentId} for ticket ${ticketId}:`, error);
-      throw error;
-    }
+    return this.attachmentService.getTicketAttachment(ticketId, attachmentId, includeData);
   }
 
   async searchTicketAttachments(
     ticketId: number,
     options: AutotaskQueryOptionsExtended = {},
   ): Promise<AutotaskTicketAttachment[]> {
-    const client = await this.ensureClient();
-
-    try {
-      this.logger.debug(`Searching ticket attachments for ticket ${ticketId}:`, options);
-
-      const optimizedOptions = {
-        filter: [{ field: 'parentId', op: 'eq', value: ticketId }],
-        pageSize: options.pageSize || 10,
-      };
-
-      const result = await client.attachments.list(optimizedOptions);
-      const attachments = (result.data as any[]) || [];
-
-      this.logger.info(`Retrieved ${attachments.length} ticket attachments`);
-      return attachments as AutotaskTicketAttachment[];
-    } catch (error) {
-      this.logger.error(`Failed to search ticket attachments for ticket ${ticketId}:`, error);
-      throw error;
-    }
+    return this.attachmentService.searchTicketAttachments(ticketId, options);
   }
 
   // Expense operations - delegated to ExpenseService
