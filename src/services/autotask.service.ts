@@ -527,6 +527,36 @@ export class AutotaskService {
   }
 
   // ============================================================================
+  // QUERY OPERATIONS
+  // ============================================================================
+
+  /**
+   * Get count of records matching query criteria
+   * Uses Autotask's count API endpoint for efficient counting
+   */
+  async queryCount(entity: string, filters: any[]): Promise<number> {
+    await this.ensureInitialized();
+    const client = await this.ensureClient();
+
+    try {
+      this.logger.debug(`Counting ${entity} with filters:`, filters);
+
+      // Use Autotask count endpoint: POST /v1.0/{Entity}/query/count
+      const response = await (client as any).axios.post(`/${entity}/query/count`, {
+        filter: filters,
+      });
+
+      const count = response.data?.queryCount ?? 0;
+      this.logger.debug(`Count result for ${entity}: ${count}`);
+
+      return count;
+    } catch (error) {
+      this.logger.error(`Failed to count ${entity}:`, error);
+      return 0;
+    }
+  }
+
+  // ============================================================================
   // ENTITY OPERATIONS
   // ============================================================================
 

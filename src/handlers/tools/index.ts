@@ -26,6 +26,7 @@ export { successResult, errorResult, validateArgs, removeUndefined, withErrorHan
 
 // Tool registrars - import for local use
 import { registerSystemTools } from './system.tools.js';
+import { registerQueryTools } from './query.tools.js';
 import { registerCompanyTools } from './company.tools.js';
 import { registerContactTools } from './contact.tools.js';
 import { registerTicketTools } from './ticket.tools.js';
@@ -43,6 +44,7 @@ import { registerConfigItemTools } from './config-item.tools.js';
 // Re-export for external use
 export {
   registerSystemTools,
+  registerQueryTools,
   registerCompanyTools,
   registerContactTools,
   registerTicketTools,
@@ -63,6 +65,7 @@ export {
  */
 const toolModuleRegistry: Record<string, ToolRegistrar> = {
   system: registerSystemTools,
+  query: registerQueryTools,
   company: registerCompanyTools,
   contact: registerContactTools,
   ticket: registerTicketTools,
