@@ -77,4 +77,35 @@ export abstract class BaseEntityService {
   protected mapError(error: unknown, operation: string): MappedError {
     return ErrorMapper.mapAutotaskError(error, operation);
   }
+
+  /**
+   * Get count of query results
+   *
+   * Uses Autotask's count API endpoint to get the number of matching records
+   * without fetching the actual data.
+   *
+   * @param entity - Entity type (e.g., 'Tickets', 'Companies')
+   * @param filters - Query filters
+   * @returns Promise<number> - Count of matching records
+   */
+  protected async countQuery(entity: string, filters: any[]): Promise<number> {
+    try {
+      const client = await this.getClient();
+      this.logger.debug(`Counting ${entity} with filters:`, filters);
+
+      // Use Autotask count endpoint: POST /v1.0/{Entity}/query/count
+      const response = await (client as any).axios.post(`/${entity}/query/count`, {
+        filter: filters,
+      });
+
+      const count = response.data?.queryCount ?? 0;
+      this.logger.debug(`Count result for ${entity}: ${count}`);
+
+      return count;
+    } catch (error) {
+      this.logger.error(`Failed to count ${entity}:`, error);
+      // If count fails, return 0 and let normal query proceed
+      return 0;
+    }
+  }
 }
