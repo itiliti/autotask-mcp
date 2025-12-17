@@ -34,7 +34,17 @@ export const registerTicketTools: ToolRegistrar = (_context): ToolDefinition[] =
       tool: {
         name: 'autotask_search_tickets',
         description:
-          'Search for tickets in Autotask. **Smart Segmentation**: For large result sets (>200 tickets), results are automatically segmented by time period (most recent first). Use date filters (createDateFrom/To or lastActivityDateFrom/To) to search specific periods. **Pagination**: Returns 50 tickets by default. Set pageSize: -1 for ALL tickets. Use filters (searchTerm, companyID, status, assignedResourceID) to narrow results. For full ticket data, use get_ticket_details.',
+          'Search for tickets in Autotask with intelligent query optimization. ' +
+          '**Smart Query Strategies**: Automatically selects optimal approach: ' +
+          '(1) Direct fetch for ≤500 results, ' +
+          '(2) Reverse time-window search for "latest" queries (searches 30→90→180→365 days until results found), ' +
+          '(3) Binary search for large time windows (>2500 results), ' +
+          '(4) Paginated fetch up to 5000 results (10 pages). ' +
+          '**For "how many" questions**: Use autotask_query_count instead of fetching all records. ' +
+          '**Pagination**: Returns up to 500 tickets by default. Set pageSize: -1 for ALL tickets (bypasses smart query). ' +
+          '**Filters**: Use searchTerm, companyID, status, assignedResourceID, date ranges (createDateFrom/To, lastActivityDateFrom/To). ' +
+          '**Large result sets**: Add date range or other filters to narrow results. ' +
+          'For full ticket data, use autotask_get_ticket_details.',
         inputSchema: zodToJsonSchema(TicketSchemas.SearchTickets, { $refStrategy: 'none', target: 'jsonSchema7' }) as any,
         annotations: {
           title: 'Search Tickets',
