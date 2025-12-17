@@ -65,3 +65,4 @@ src/utils/build-info.ts
 .codex/config.toml
 .codex/version.json
 .codex/history.jsonl
+NUL
