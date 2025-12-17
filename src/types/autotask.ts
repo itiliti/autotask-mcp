@@ -53,6 +53,7 @@ export interface AutotaskTicket {
   dueDateTime?: string;
   completedDate?: string;
   lastActivityDate?: string;
+  lastTrackedModifiedDateTime?: string;
   estimatedHours?: number;
   hoursToBeScheduled?: number;
   [key: string]: any;
@@ -99,6 +100,8 @@ export interface AutotaskResource {
   title?: string;
   resourceType?: number;
   userType?: number;
+  createDate?: string;
+  lastModifiedDate?: string;
   [key: string]: any;
 }
 
@@ -172,6 +175,8 @@ export interface AutotaskContract {
   endDate?: string;
   status?: number;
   contactID?: number;
+  createDate?: string;
+  lastModifiedDate?: string;
   [key: string]: any;
 }
 
@@ -407,3 +412,21 @@ export enum CompanyType {
   Vendor = 5,
   Partner = 6,
 }
+
+/**
+ * Entity Modification Date Field Mapping
+ *
+ * Maps entity types to their modification date field names.
+ * Used for cache invalidation and incremental updates.
+ */
+export const ENTITY_MODIFICATION_FIELDS = {
+  Tickets: 'lastTrackedModifiedDateTime',
+  Companies: 'lastTrackedModifiedDateTime',
+  Contacts: 'lastModifiedDate',
+  Contracts: 'lastModifiedDate',
+  Resources: 'lastModifiedDate',
+  TimeEntries: 'lastModifiedDate',
+  ConfigurationItems: 'lastActivityDate',
+} as const;
+
+export type EntityType = keyof typeof ENTITY_MODIFICATION_FIELDS;
