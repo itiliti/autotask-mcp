@@ -45,6 +45,7 @@ import { McpServerConfig } from '../types/mcp';
 import { Logger } from '../utils/logger';
 import { TicketMetadataCache } from './ticket-metadata.cache.js';
 import { ApiUserCacheService } from './api-user-cache.service.js';
+import { EntityCacheService } from './entity-cache.service.js';
 
 export class AutotaskService {
   private client: AutotaskClient | null = null;
@@ -54,6 +55,7 @@ export class AutotaskService {
   private metadataCache: TicketMetadataCache;
   private rateLimiter: RateLimiterService;
   private apiUserCache: ApiUserCacheService;
+  private entityCache: EntityCacheService;
   private defaultResourceId: number | null = null;
 
   // Service context and entity services (lazy-initialized)
@@ -84,6 +86,7 @@ export class AutotaskService {
       minimumCallsRemaining: 100, // Block when <100 calls remaining
     });
     this.apiUserCache = new ApiUserCacheService(logger);
+    this.entityCache = new EntityCacheService(logger);
   }
 
   /**
@@ -117,6 +120,9 @@ export class AutotaskService {
       // Initialize metadata cache
       this.metadataCache.setClient(this.client);
       await this.metadataCache.initialize();
+
+      // Initialize entity cache (with disk persistence and pre-population)
+      await this.entityCache.initialize(this.client);
 
       // Initialize default resource ID (API user)
       await this.initializeDefaultResourceId();
@@ -389,6 +395,7 @@ export class AutotaskService {
         rateLimiter: this.rateLimiter,
         metadataCache: this.metadataCache,
         apiUserCache: this.apiUserCache,
+        entityCache: this.entityCache,
         config: this.config,
         executeWithRateLimit: <T>(request: () => Promise<T>, endpoint?: string) =>
           this.executeWithRateLimit(request, endpoint),

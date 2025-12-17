@@ -17,6 +17,7 @@ import { Logger } from '../../utils/logger.js';
 import { RateLimiterService } from '../rate-limiter.service.js';
 import { TicketMetadataCache } from '../ticket-metadata.cache.js';
 import { ApiUserCacheService } from '../api-user-cache.service.js';
+import { EntityCacheService } from '../entity-cache.service.js';
 import { McpServerConfig } from '../../types/mcp.js';
 import { AutotaskQueryOptions } from '../../types/autotask.js';
 
@@ -46,6 +47,9 @@ export interface IServiceContext {
 
   /** API user cache service */
   readonly apiUserCache: ApiUserCacheService;
+
+  /** Entity cache service (Companies, Contacts, Resources, Contracts, Tickets) */
+  readonly entityCache: EntityCacheService;
 
   /** Server configuration */
   readonly config: McpServerConfig;
@@ -80,6 +84,7 @@ export class ServiceContext implements IServiceContext {
   readonly rateLimiter: RateLimiterService;
   readonly metadataCache: TicketMetadataCache;
   readonly apiUserCache: ApiUserCacheService;
+  readonly entityCache: EntityCacheService;
   readonly config: McpServerConfig;
 
   constructor(params: {
@@ -88,6 +93,7 @@ export class ServiceContext implements IServiceContext {
     rateLimiter: RateLimiterService;
     metadataCache: TicketMetadataCache;
     apiUserCache: ApiUserCacheService;
+    entityCache: EntityCacheService;
     config: McpServerConfig;
     executeWithRateLimit: <T>(request: () => Promise<T>, endpoint?: string) => Promise<T>;
     resolvePaginationOptions: (options: AutotaskQueryOptions, defaultPageSize: number) => PaginationConfig;
@@ -97,6 +103,7 @@ export class ServiceContext implements IServiceContext {
     this.rateLimiter = params.rateLimiter;
     this.metadataCache = params.metadataCache;
     this.apiUserCache = params.apiUserCache;
+    this.entityCache = params.entityCache;
     this.config = params.config;
     this._executeWithRateLimit = params.executeWithRateLimit;
     this._resolvePaginationOptions = params.resolvePaginationOptions;
