@@ -13,10 +13,14 @@ import {
   TicketUpdateFields,
 } from '../../types/autotask.js';
 import { ErrorMapper } from '../../utils/error-mapper.js';
+import { QueryCounterService } from '../core/query-counter.service.js';
 
 export class TicketService extends BaseEntityService {
+  private queryCounter: QueryCounterService;
+
   constructor(context: IServiceContext) {
     super(context);
+    this.queryCounter = new QueryCounterService(context.logger);
   }
 
   /**
@@ -141,6 +145,33 @@ export class TicketService extends BaseEntityService {
           });
         }
 
+        // Handle lastActivityDate range filters
+        if (options.lastActivityDateFrom !== undefined) {
+          filters.push({
+            op: 'gte',
+            field: 'lastActivityDate',
+            value: options.lastActivityDateFrom,
+          });
+        }
+
+        if (options.lastActivityDateTo !== undefined) {
+          filters.push({
+            op: 'lte',
+            field: 'lastActivityDate',
+            value: options.lastActivityDateTo,
+          });
+        }
+
+        // Check if we should use smart segmentation
+        // Only segment if:
+        // 1. No date filters are provided (user wants "all" or "latest")
+        // 2. Not in unlimited mode (segmentation doesn't make sense with -1)
+        const hasDateFilters =
+          options.createDateFrom !== undefined ||
+          options.createDateTo !== undefined ||
+          options.lastActivityDateFrom !== undefined ||
+          options.lastActivityDateTo !== undefined;
+
         // Resolve pagination with safe defaults
         const { pageSize, unlimited } = this.resolvePaginationOptions(options, 50);
 
@@ -167,6 +198,57 @@ export class TicketService extends BaseEntityService {
           'resolution',
         ];
 
+        // Smart segmentation: If no date filters and not unlimited, check count first
+        if (!hasDateFilters && !unlimited) {
+          const count = await this.countQuery('Tickets', filters);
+
+          // If count exceeds threshold (200), use segmented query
+          if (count > 200) {
+            this.logger.info(`Ticket count (${count}) exceeds threshold, using smart segmentation`);
+
+            // Determine which date field to segment on
+            // Default to lastActivityDate for "latest" queries
+            const dateField = 'lastActivityDate';
+
+            const segmentedResult = await this.queryCounter.executeSegmentedQuery<AutotaskTicket>(
+              client,
+              {
+                threshold: 200,
+                dateField,
+                entity: 'Tickets',
+              },
+              filters,
+              async (segmentFilters: any[]) => {
+                // Fetch tickets for this segment
+                const queryOptions = {
+                  filter: segmentFilters,
+                  pageSize: pageSize!,
+                  includeFields: essentialFields,
+                };
+
+                const result = await client.tickets.list(queryOptions);
+                let tickets = (result.data as AutotaskTicket[]) || [];
+
+                // Safety cap
+                if (tickets.length > pageSize!) {
+                  this.logger.warn(
+                    `API returned ${tickets.length} tickets but pageSize was ${pageSize}. Truncating to requested limit.`,
+                  );
+                  tickets = tickets.slice(0, pageSize!);
+                }
+
+                // Optimize tickets
+                return tickets.map((ticket) => this.optimizeTicketDataAggressive(ticket));
+              },
+            );
+
+            // Return segmented results with metadata
+            this.logger.info(`${segmentedResult.message}`);
+            return segmentedResult.items;
+          }
+        }
+
+        // Normal query path (with or without date filters)
         if (unlimited) {
           // Unlimited mode: fetch ALL tickets via pagination
           const allTickets: AutotaskTicket[] = [];

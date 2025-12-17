@@ -40,10 +40,16 @@ export const SearchTicketsInputSchema = z
     assignedResourceID: PositiveIdSchema.optional(),
     unassigned: BooleanFilterSchema,
     createDateFrom: ISODateTimeSchema.optional().describe(
-      'Filter tickets created on or after this date/time (ISO 8601 format, e.g., 2025-01-01T00:00:00Z)'
+      'Filter tickets created on or after this date/time (ISO 8601 format, e.g., 2025-01-01T00:00:00Z). Use for "new tickets" or "recently created" queries.'
     ),
     createDateTo: ISODateTimeSchema.optional().describe(
-      'Filter tickets created on or before this date/time (ISO 8601 format, e.g., 2025-12-31T23:59:59Z)'
+      'Filter tickets created on or before this date/time (ISO 8601 format, e.g., 2025-12-31T23:59:59Z). Use for "new tickets" or "recently created" queries.'
+    ),
+    lastActivityDateFrom: ISODateTimeSchema.optional().describe(
+      'Filter tickets with activity on or after this date/time (ISO 8601 format). Use for "recent activity", "latest updates", or "modified recently" queries.'
+    ),
+    lastActivityDateTo: ISODateTimeSchema.optional().describe(
+      'Filter tickets with activity on or before this date/time (ISO 8601 format). Use for "recent activity", "latest updates", or "modified recently" queries.'
     ),
     pageSize: PageSizeStandardSchema,
   })
