@@ -576,7 +576,7 @@ export class EntityCacheService {
   }
 
   /**
-   * Get an entity from cache
+   * Get an entity from cache (synchronous, cache-only)
    */
   get<T>(entityType: EntityType, id: number): T | null {
     const cache = this.caches.get(entityType);
@@ -593,7 +593,7 @@ export class EntityCacheService {
   }
 
   /**
-   * Get multiple entities from cache
+   * Get multiple entities from cache (synchronous, cache-only)
    */
   getMany<T>(entityType: EntityType, ids: number[]): Map<number, T> {
     const results = new Map<number, T>();
@@ -604,6 +604,246 @@ export class EntityCacheService {
       }
     });
     return results;
+  }
+
+  /**
+   * Get an entity with automatic API fallback on cache miss
+   *
+   * For full caches (Companies, Contacts, Resources, Contracts): Uses maxId to determine if API call needed
+   * For spotty caches (Tickets): Always tries API on cache miss
+   * On API hit, triggers background cache refresh
+   */
+  async getWithFallback<T>(client: AutotaskClient, entityType: EntityType, id: number): Promise<T | null> {
+    // Try cache first
+    const cached = this.get<T>(entityType, id);
+    if (cached) return cached;
+
+    // Cache miss - check if we should try API
+    const hasFullCache = entityType !== 'Tickets';
+    const maxId = this.maxIds.get(entityType) || 0;
+
+    // For full caches, only query API if ID is within range or beyond max
+    if (hasFullCache && maxId > 0 && id > maxId) {
+      // ID is beyond our known range - likely doesn't exist
+      this.logger.debug(`${entityType}: ID ${id} beyond maxId ${maxId}, skipping API call`);
+      return null;
+    }
+
+    // Try API fetch
+    try {
+      this.logger.debug(`${entityType}: Cache miss for ID ${id}, querying API`);
+      const result = await (client as any)[entityType.toLowerCase()].get(id);
+      const item = result.data as T;
+
+      if (item) {
+        // Cache the result
+        this.set(entityType, id, item);
+
+        // Trigger background refresh to find other missing items
+        this.triggerIncrementalRefresh(client, entityType);
+
+        return item;
+      }
+
+      return null;
+    } catch (error: any) {
+      // 404 means item doesn't exist
+      if (error.response?.status === 404) {
+        return null;
+      }
+      this.logger.error(`${entityType}: Failed to fetch ID ${id} from API:`, error);
+      return null;
+    }
+  }
+
+  /**
+   * Get multiple entities with automatic API fallback on cache misses
+   *
+   * Uses batch queries with 'in' operator for efficient multi-record fetch
+   */
+  async getManyWithFallback<T>(client: AutotaskClient, entityType: EntityType, ids: number[]): Promise<Map<number, T>> {
+    const results = new Map<number, T>();
+    const missingIds: number[] = [];
+
+    // Check cache first
+    ids.forEach((id) => {
+      const cached = this.get<T>(entityType, id);
+      if (cached) {
+        results.set(id, cached);
+      } else {
+        missingIds.push(id);
+      }
+    });
+
+    // If all found in cache, return
+    if (missingIds.length === 0) {
+      return results;
+    }
+
+    // For full caches, filter out IDs beyond maxId
+    const hasFullCache = entityType !== 'Tickets';
+    const maxId = this.maxIds.get(entityType) || 0;
+    let idsToFetch = missingIds;
+
+    if (hasFullCache && maxId > 0) {
+      idsToFetch = missingIds.filter((id) => id <= maxId);
+      const skippedCount = missingIds.length - idsToFetch.length;
+      if (skippedCount > 0) {
+        this.logger.debug(`${entityType}: Skipped ${skippedCount} IDs beyond maxId ${maxId}`);
+      }
+    }
+
+    // If no IDs to fetch, return what we have
+    if (idsToFetch.length === 0) {
+      return results;
+    }
+
+    // Fetch missing items using 'in' operator (batch query)
+    try {
+      this.logger.debug(`${entityType}: Fetching ${idsToFetch.length} missing IDs from API`);
+
+      const response = await (client as any)[entityType.toLowerCase()].list({
+        filter: [
+          {
+            field: 'id',
+            op: 'in',
+            value: idsToFetch,
+          },
+        ],
+        pageSize: 500,
+      });
+
+      const items = (response.data || []) as T[];
+
+      // Cache the results
+      items.forEach((item: any) => {
+        if (item.id) {
+          this.set(entityType, item.id, item);
+          results.set(item.id, item);
+        }
+      });
+
+      // If we found items, trigger background refresh
+      if (items.length > 0) {
+        this.triggerIncrementalRefresh(client, entityType);
+      }
+
+      this.logger.debug(`${entityType}: Found ${items.length}/${idsToFetch.length} items via API`);
+    } catch (error) {
+      this.logger.error(`${entityType}: Failed to batch fetch IDs from API:`, error);
+    }
+
+    return results;
+  }
+
+  /**
+   * Trigger incremental refresh in background (non-blocking)
+   * Uses debouncing to avoid multiple simultaneous refreshes
+   */
+  private triggerIncrementalRefresh(client: AutotaskClient, entityType: EntityType): void {
+    // Simple debouncing - if already refreshed recently, skip
+    const lastCheck = this.lastIncrementalCheck.get(entityType);
+    const now = new Date();
+
+    if (lastCheck && now.getTime() - lastCheck.getTime() < 30000) {
+      // Refreshed within last 30 seconds, skip
+      return;
+    }
+
+    // Trigger background refresh using both maxId and lastModifiedDate
+    this.logger.debug(`${entityType}: Triggering background cache refresh after miss`);
+
+    this.refreshUsingMaxIdAndModDate(client, entityType).catch((error) => {
+      this.logger.error(`${entityType}: Background refresh failed:`, error);
+    });
+  }
+
+  /**
+   * Refresh cache using both maxId (for new items) and lastModifiedDate (for updates)
+   * Uses OR filter to handle both cases in a single query
+   */
+  private async refreshUsingMaxIdAndModDate(client: AutotaskClient, entityType: EntityType): Promise<void> {
+    const maxId = this.maxIds.get(entityType) || 0;
+    const lastCheck = this.lastIncrementalCheck.get(entityType);
+    const modField = ENTITY_MODIFICATION_FIELDS[entityType];
+
+    if (!lastCheck) {
+      // No previous check, skip
+      return;
+    }
+
+    try {
+      const sinceDate = lastCheck.toISOString();
+
+      this.logger.debug(`${entityType}: Refreshing using maxId>${maxId} OR ${modField}>=${sinceDate}`);
+
+      // Build filter: id > maxId OR modDate >= sinceDate
+      // Note: Autotask API uses implicit OR between filter conditions at top level
+      let page = 1;
+      let hasMore = true;
+      let fetchedCount = 0;
+
+      while (hasMore) {
+        const response = await (client as any)[entityType.toLowerCase()].list({
+          filter: [
+            {
+              field: 'id',
+              op: 'gt',
+              value: maxId,
+            },
+            {
+              field: modField,
+              op: 'gte',
+              value: sinceDate,
+            },
+          ],
+          pageSize: 500,
+          page,
+        });
+
+        const items = response.data || [];
+
+        if (items.length === 0) {
+          hasMore = false;
+          break;
+        }
+
+        // Update cache
+        items.forEach((item: any) => {
+          if (item.id) {
+            this.set(entityType, item.id, item);
+
+            const currentMaxId = this.maxIds.get(entityType) || 0;
+            if (item.id > currentMaxId) {
+              this.maxIds.set(entityType, item.id);
+            }
+
+            fetchedCount++;
+          }
+        });
+
+        if (items.length < 500) {
+          hasMore = false;
+        } else {
+          page++;
+        }
+
+        // Safety limit
+        if (page > 10) {
+          this.logger.warn(`${entityType}: Stopped background refresh at page 10`);
+          hasMore = false;
+        }
+      }
+
+      this.lastIncrementalCheck.set(entityType, new Date());
+
+      if (fetchedCount > 0) {
+        this.saveCache(entityType);
+        this.logger.debug(`${entityType}: Background refresh updated ${fetchedCount} items`);
+      }
+    } catch (error) {
+      this.logger.error(`${entityType}: Background refresh failed:`, error);
+    }
   }
 
   /**
