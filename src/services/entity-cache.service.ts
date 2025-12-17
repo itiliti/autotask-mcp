@@ -64,6 +64,11 @@ export class EntityCacheService {
   // Track highest IDs seen for efficient incremental queries
   private maxIds: Map<EntityType, number>;
 
+  // Track initialization state
+  private isInitialized: boolean = false;
+  private isInitializing: boolean = false;
+  private initializationPromise: Promise<void> | null = null;
+
   constructor(logger: Logger, cacheDir?: string) {
     this.logger = logger;
     this.caches = new Map();
@@ -181,45 +186,90 @@ export class EntityCacheService {
   }
 
   /**
-   * Pre-populate all caches on startup
+   * Pre-populate all caches on startup (non-blocking)
+   *
+   * Immediately loads persisted caches from disk, then performs validation
+   * and updates in the background. Service starts immediately with stale
+   * cache data if available, or with empty cache if not.
    */
   async initialize(client: AutotaskClient): Promise<void> {
-    this.logger.info('Initializing entity caches...');
+    if (this.isInitializing || this.isInitialized) {
+      // Already initializing or initialized, return existing promise or resolve immediately
+      return this.initializationPromise || Promise.resolve();
+    }
 
+    this.isInitializing = true;
+
+    // Step 1: Load persisted caches synchronously (fast, doesn't block)
+    this.logger.info('Loading entity caches from disk...');
+    const entities: EntityType[] = ['Companies', 'Contacts', 'Contracts', 'Resources', 'Tickets'];
+
+    let loadedCount = 0;
+    entities.forEach((entityType) => {
+      const loaded = this.loadCache(entityType);
+      if (loaded) {
+        loadedCount++;
+      }
+    });
+
+    this.logger.info(`Loaded ${loadedCount}/${entities.length} caches from disk (service ready)`);
+
+    // Step 2: Start background validation and refresh (non-blocking)
+    this.initializationPromise = this.initializeInBackground(client);
+
+    // Service is ready immediately with stale/empty cache
+    this.isInitialized = true;
+    this.isInitializing = false;
+
+    // Don't await - let it run in background
+    this.initializationPromise.catch((error) => {
+      this.logger.error('Background cache initialization failed:', error);
+    });
+  }
+
+  /**
+   * Background initialization - validates and updates caches without blocking startup
+   */
+  private async initializeInBackground(client: AutotaskClient): Promise<void> {
+    this.logger.info('Starting background cache validation and update...');
     const startTime = Date.now();
 
-    // Reference entities: Load from disk, then validate/update
-    const referenceEntities: EntityType[] = ['Companies', 'Contacts', 'Contracts', 'Resources'];
-    for (const entityType of referenceEntities) {
-      try {
-        const loaded = this.loadCache(entityType);
-        if (loaded) {
-          // Validate and update cached items
-          await this.validateAndUpdate(client, entityType);
-        } else {
-          // No cache, do full refresh
-          await this.fullRefresh(client, entityType);
-        }
-      } catch (error) {
-        this.logger.error(`Failed to initialize ${entityType} cache:`, error);
-      }
-    }
-
-    // Tickets: Load from disk, validate, then fetch only last 7 days
     try {
-      const loaded = this.loadCache('Tickets');
-      if (loaded) {
-        // Validate cached tickets against modification dates
-        await this.validateAndUpdate(client, 'Tickets');
+      // Reference entities: Validate and update in background
+      const referenceEntities: EntityType[] = ['Companies', 'Contacts', 'Contracts', 'Resources'];
+      for (const entityType of referenceEntities) {
+        try {
+          const cache = this.caches.get(entityType)!;
+          if (cache.size > 0) {
+            // Have cached data, validate and update
+            await this.validateAndUpdate(client, entityType);
+          } else {
+            // No cache, do full refresh
+            await this.fullRefresh(client, entityType);
+          }
+        } catch (error) {
+          this.logger.error(`Failed to refresh ${entityType} cache:`, error);
+        }
       }
-      // Always fetch fresh tickets from last 7 days
-      await this.refreshRecentTickets(client);
-    } catch (error) {
-      this.logger.error('Failed to initialize Tickets cache:', error);
-    }
 
-    const elapsed = Date.now() - startTime;
-    this.logger.info(`Entity caches initialized in ${elapsed}ms`);
+      // Tickets: Validate existing cache, then fetch recent tickets
+      try {
+        const ticketCache = this.caches.get('Tickets')!;
+        if (ticketCache.size > 0) {
+          // Validate cached tickets
+          await this.validateAndUpdate(client, 'Tickets');
+        }
+        // Always fetch fresh tickets from last 7 days
+        await this.refreshRecentTickets(client);
+      } catch (error) {
+        this.logger.error('Failed to refresh Tickets cache:', error);
+      }
+
+      const elapsed = Date.now() - startTime;
+      this.logger.info(`Background cache refresh completed in ${elapsed}ms`);
+    } catch (error) {
+      this.logger.error('Background cache initialization encountered errors:', error);
+    }
   }
 
   /**
