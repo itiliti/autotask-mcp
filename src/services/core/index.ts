@@ -11,11 +11,4 @@
 export { ServiceContext, type IServiceContext, type PaginationConfig } from './service.context.js';
 export { BaseEntityService } from './base.service.js';
 export { NoteValidation, buildNotePayload, type NotePayloadParams } from './base-note.service.js';
-export {
-  QueryCounterService,
-  type QueryCountResult,
-  type DateSegment,
-  type SegmentedQueryResult,
-  type SegmentResult,
-  type SegmentationConfig,
-} from './query-counter.service.js';
+export { QueryCounterService, type QueryResult } from './query-counter.service.js';

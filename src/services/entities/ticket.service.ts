@@ -50,15 +50,21 @@ export class TicketService extends BaseEntityService {
   }
 
   /**
-   * Search for tickets with safe pagination defaults
+   * Search for tickets with smart query optimization
    *
    * @param options - Search options with optional pageSize
    * @returns Array of optimized tickets
    *
-   * Pagination behavior (v2.0.0+):
-   * - No pageSize specified: Returns 50 tickets (safe default)
+   * Smart Query Strategies (v2.1.0+):
+   * - Direct fetch: count ≤ 500, fetch immediately
+   * - Reverse time-window: For "latest" queries, searches 30→90→180→365 days until results found
+   * - Binary search: For large time windows (>2500), recursively splits date range
+   * - Paginated fetch: Standard fetch up to 10 pages (5000 results)
+   *
+   * Pagination behavior:
+   * - No pageSize specified: Uses smart query optimization (default 500 per page)
    * - pageSize: N (1-500): Returns up to N tickets
-   * - pageSize: -1: Returns ALL tickets (use with caution)
+   * - pageSize: -1: Returns ALL tickets (bypasses smart query, use with caution)
    *
    * Note: All tickets are aggressively optimized to reduce response size.
    * Use get_ticket_details for full ticket data.
@@ -69,6 +75,29 @@ export class TicketService extends BaseEntityService {
     return this.context.executeWithRateLimit(async () => {
       try {
         this.logger.debug('Searching tickets with options:', options);
+
+        // Define essential fields to request from API (reduces response size significantly)
+        const essentialFields = [
+          'id',
+          'ticketNumber',
+          'title',
+          'description',
+          'status',
+          'priority',
+          'companyID',
+          'contactID',
+          'assignedResourceID',
+          'createDate',
+          'lastActivityDate',
+          'dueDateTime',
+          'completedDate',
+          'estimatedHours',
+          'ticketType',
+          'source',
+          'issueType',
+          'subIssueType',
+          'resolution',
+        ];
 
         // Build proper filter array for Autotask API
         const filters: any[] = [];
@@ -162,94 +191,67 @@ export class TicketService extends BaseEntityService {
           });
         }
 
-        // Check if we should use smart segmentation
-        // Only segment if:
-        // 1. No date filters are provided (user wants "all" or "latest")
-        // 2. Not in unlimited mode (segmentation doesn't make sense with -1)
+        // Detect if this is a "latest" query (no date filters = user wants most recent)
         const hasDateFilters =
           options.createDateFrom !== undefined ||
           options.createDateTo !== undefined ||
           options.lastActivityDateFrom !== undefined ||
           options.lastActivityDateTo !== undefined;
+        const isLatestQuery = !hasDateFilters;
 
-        // Resolve pagination with safe defaults
-        const { pageSize, unlimited } = this.resolvePaginationOptions(options, 50);
+        // Check if unlimited mode was requested
+        const { unlimited } = this.resolvePaginationOptions(options, 500);
 
-        // Define essential fields to request from API (reduces response size significantly)
-        const essentialFields = [
-          'id',
-          'ticketNumber',
-          'title',
-          'description',
-          'status',
-          'priority',
-          'companyID',
-          'contactID',
-          'assignedResourceID',
-          'createDate',
-          'lastActivityDate',
-          'dueDateTime',
-          'completedDate',
-          'estimatedHours',
-          'ticketType',
-          'source',
-          'issueType',
-          'subIssueType',
-          'resolution',
-        ];
+        // Use smart query optimization unless unlimited mode
+        if (!unlimited) {
+          // Use smart query with adaptive strategies
+          const result = await this.queryCounter.executeSmartQuery<AutotaskTicket>(
+            client,
+            'Tickets',
+            filters,
+            isLatestQuery,
+            async (queryFilters: any[], pageSize: number, page?: number) => {
+              // Fetch tickets with given filters
+              const queryOptions: any = {
+                filter: queryFilters,
+                pageSize,
+                includeFields: essentialFields,
+              };
 
-        // Smart segmentation: If no date filters and not unlimited, check count first
-        if (!hasDateFilters && !unlimited) {
-          const count = await this.countQuery('Tickets', filters);
+              if (page !== undefined) {
+                queryOptions.page = page;
+              }
 
-          // If count exceeds threshold (200), use segmented query
-          if (count > 200) {
-            this.logger.info(`Ticket count (${count}) exceeds threshold, using smart segmentation`);
+              this.logger.debug(`Fetching tickets page ${page ?? 1} with pageSize ${pageSize}`);
 
-            // Determine which date field to segment on
-            // Default to lastActivityDate for "latest" queries
-            const dateField = 'lastActivityDate';
+              const response = await client.tickets.list(queryOptions);
+              let tickets = (response.data as AutotaskTicket[]) || [];
 
-            const segmentedResult = await this.queryCounter.executeSegmentedQuery<AutotaskTicket>(
-              client,
-              {
-                threshold: 200,
-                dateField,
-                entity: 'Tickets',
-              },
-              filters,
-              async (segmentFilters: any[]) => {
-                // Fetch tickets for this segment
-                const queryOptions = {
-                  filter: segmentFilters,
-                  pageSize: pageSize!,
-                  includeFields: essentialFields,
-                };
+              // Safety cap: Autotask API sometimes ignores pageSize, enforce client-side
+              if (tickets.length > pageSize) {
+                this.logger.warn(
+                  `API returned ${tickets.length} tickets but pageSize was ${pageSize}. Truncating to requested limit.`,
+                );
+                tickets = tickets.slice(0, pageSize);
+              }
 
-                const result = await client.tickets.list(queryOptions);
-                let tickets = (result.data as AutotaskTicket[]) || [];
+              // Optimize tickets
+              return tickets.map((ticket) => this.optimizeTicketDataAggressive(ticket));
+            },
+            'lastActivityDate', // Use lastActivityDate for time-based segmentation
+          );
 
-                // Safety cap
-                if (tickets.length > pageSize!) {
-                  this.logger.warn(
-                    `API returned ${tickets.length} tickets but pageSize was ${pageSize}. Truncating to requested limit.`,
-                  );
-                  tickets = tickets.slice(0, pageSize!);
-                }
-
-                // Optimize tickets
-                return tickets.map((ticket) => this.optimizeTicketDataAggressive(ticket));
-              },
-            );
-
-            // Return segmented results with metadata
-            this.logger.info(`${segmentedResult.message}`);
-            return segmentedResult.items;
+          // Log the result metadata
+          this.logger.info(`${result.message} (strategy: ${result.strategy})`);
+          if (result.warning) {
+            this.logger.warn(result.warning);
           }
-        }
+          if (result.metadata) {
+            this.logger.debug('Query metadata:', result.metadata);
+          }
 
-        // Normal query path (with or without date filters)
-        if (unlimited) {
+          return result.items;
+        } else {
           // Unlimited mode: fetch ALL tickets via pagination
           const allTickets: AutotaskTicket[] = [];
           const batchSize = 500;
@@ -292,31 +294,6 @@ export class TicketService extends BaseEntityService {
 
           this.logger.info(`Retrieved ${allTickets.length} tickets across ${currentPage} pages (unlimited mode)`);
           return allTickets;
-        } else {
-          // Limited mode: fetch single page
-          const queryOptions = {
-            filter: filters,
-            pageSize: pageSize!,
-            includeFields: essentialFields,
-          };
-
-          this.logger.debug('Single page ticket request:', queryOptions);
-
-          const result = await client.tickets.list(queryOptions);
-          let tickets = (result.data as AutotaskTicket[]) || [];
-
-          // Safety cap: Autotask API sometimes ignores pageSize, enforce client-side
-          if (tickets.length > pageSize!) {
-            this.logger.warn(
-              `API returned ${tickets.length} tickets but pageSize was ${pageSize}. Truncating to requested limit.`,
-            );
-            tickets = tickets.slice(0, pageSize!);
-          }
-
-          const optimizedTickets = tickets.map((ticket) => this.optimizeTicketDataAggressive(ticket));
-
-          this.logger.info(`Retrieved ${optimizedTickets.length} tickets (pageSize: ${pageSize})`);
-          return optimizedTickets;
         }
       } catch (error) {
         this.logger.error('Failed to search tickets:', error);

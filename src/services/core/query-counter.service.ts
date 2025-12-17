@@ -1,70 +1,48 @@
 /**
- * Query Counter Service
+ * Query Counter Service (v2)
  *
- * Provides count-based query segmentation for large result sets.
- * When result counts exceed thresholds, automatically segments queries
- * by time periods (year/month) to provide manageable result sets.
+ * Smart query execution with adaptive strategies:
+ * - Reverse time-window search for "latest/max" queries (30→90→180→365 days)
+ * - Adaptive binary search using count queries when results >2500
+ * - ID tracking to avoid re-fetching known records
+ * - New thresholds: 500/page, warn at 2500, limit at 5000
+ * - Results are always ID-ordered (created date order)
  */
 
 import { AutotaskClient } from 'autotask-node';
 import { Logger } from '../../utils/logger.js';
 
 /**
- * Result of a count query
+ * Query execution result with metadata
  */
-export interface QueryCountResult {
-  count: number;
-  exceedsThreshold: boolean;
-  suggestedSegments?: DateSegment[];
-}
-
-/**
- * Date segment for time-based query segmentation
- */
-export interface DateSegment {
-  startDate: string; // ISO date
-  endDate: string; // ISO date
-  label: string; // e.g., "2024", "2024-12", "2024-Q4"
-}
-
-/**
- * Result from a segmented query execution
- */
-export interface SegmentedQueryResult<T> {
+export interface QueryResult<T> {
   items: T[];
   totalCount: number;
-  segments: SegmentResult[];
-  isSegmented: boolean;
+  strategy: 'direct' | 'reverse-window' | 'binary-search' | 'paginated';
   message: string;
-}
-
-/**
- * Information about a single segment's results
- */
-export interface SegmentResult {
-  label: string;
-  count: number;
-  fetched: boolean;
-}
-
-/**
- * Configuration for query segmentation
- */
-export interface SegmentationConfig {
-  threshold: number; // Max results before segmentation
-  dateField: string; // Field to segment on (e.g., 'createDate', 'lastActivityDate')
-  entity: string; // Entity type (e.g., 'Tickets', 'Notes')
+  warning?: string;
+  metadata?: {
+    windowsSearched?: number;
+    maxIdSeen?: number;
+    pagesSearched?: number;
+  };
 }
 
 /**
  * Query Counter Service
  *
- * Handles counting query results and generating time-based segments
- * when result sets exceed manageable thresholds.
+ * Handles intelligent query execution strategies based on result set size.
  */
 export class QueryCounterService {
   private readonly logger: Logger;
-  private readonly defaultThreshold = 200;
+
+  // Thresholds
+  private readonly PAGE_SIZE = 500;
+  private readonly WARN_THRESHOLD = 2500; // 5 pages
+  private readonly MAX_RESULTS = 5000; // 10 pages
+
+  // Time windows for reverse search (in days)
+  private readonly TIME_WINDOWS = [30, 90, 180, 365, 730]; // 30d, 90d, 180d, 1y, 2y
 
   constructor(logger: Logger) {
     this.logger = logger;
@@ -72,17 +50,11 @@ export class QueryCounterService {
 
   /**
    * Get count of results for a query
-   *
-   * @param client - Autotask client instance
-   * @param entity - Entity type (e.g., 'Tickets')
-   * @param filters - Query filters
-   * @returns Promise<number> - Count of matching records
    */
   async getCount(client: AutotaskClient, entity: string, filters: any[]): Promise<number> {
     try {
-      this.logger.debug(`Getting count for ${entity} with filters:`, filters);
+      this.logger.debug(`Counting ${entity} with filters:`, filters);
 
-      // Use Autotask count endpoint: POST /v1.0/{Entity}/query/count
       const response = await (client as any).axios.post(`/${entity}/query/count`, {
         filter: filters,
       });
@@ -93,182 +65,347 @@ export class QueryCounterService {
       return count;
     } catch (error) {
       this.logger.error(`Failed to get count for ${entity}:`, error);
-      // If count fails, return 0 and let normal query proceed
       return 0;
     }
   }
 
   /**
-   * Generate time-based segments for a date range
-   *
-   * Generates yearly segments going backward from current date.
-   * If a year segment would still exceed threshold, subdivides into months.
-   *
-   * @param totalCount - Total number of records
-   * @param dateField - Field to segment on
-   * @param threshold - Max results per segment
-   * @returns Array of date segments
-   */
-  generateTimeSegments(totalCount: number, dateField: string, threshold: number = this.defaultThreshold): DateSegment[] {
-    const segments: DateSegment[] = [];
-    const currentDate = new Date();
-    const currentYear = currentDate.getFullYear();
-    const currentMonth = currentDate.getMonth(); // 0-11
-
-    // Estimate how many segments we need
-    // Simple heuristic: divide total by threshold, add some buffer
-    const estimatedSegmentsNeeded = Math.ceil(totalCount / threshold);
-
-    // Start with current year/month and work backward
-    let year = currentYear;
-    let month = currentMonth;
-
-    // Generate segments going backward in time
-    // Start with monthly segments for recent data
-    for (let i = 0; i < estimatedSegmentsNeeded && i < 36; i++) {
-      // Limit to 36 months (3 years)
-      const startDate = new Date(year, month, 1);
-      const endDate = new Date(year, month + 1, 0, 23, 59, 59); // Last day of month
-
-      segments.push({
-        startDate: startDate.toISOString(),
-        endDate: endDate.toISOString(),
-        label: `${year}-${String(month + 1).padStart(2, '0')}`,
-      });
-
-      // Move to previous month
-      month--;
-      if (month < 0) {
-        month = 11;
-        year--;
-      }
-    }
-
-    this.logger.debug(`Generated ${segments.length} time segments for ${dateField}`);
-    return segments;
-  }
-
-  /**
-   * Execute a segmented query
-   *
-   * Fetches the first segment that contains results, provides metadata
-   * about all segments for caller guidance.
+   * Execute query with smart strategy selection
    *
    * @param client - Autotask client
-   * @param config - Segmentation configuration
-   * @param baseFilters - Base query filters (without date range)
-   * @param fetcher - Function to fetch results for a given set of filters
-   * @returns Promise<SegmentedQueryResult<T>> - Results with segmentation metadata
+   * @param entity - Entity type (e.g., 'Tickets')
+   * @param baseFilters - Base query filters
+   * @param isLatestQuery - True if searching for "latest/max/recent"
+   * @param fetcher - Function to fetch results for given filters
+   * @param dateField - Date field for time-based queries (default: 'createDate')
    */
-  async executeSegmentedQuery<T>(
+  async executeSmartQuery<T extends { id?: number }>(
     client: AutotaskClient,
-    config: SegmentationConfig,
+    entity: string,
     baseFilters: any[],
-    fetcher: (filters: any[]) => Promise<T[]>,
-  ): Promise<SegmentedQueryResult<T>> {
-    const { threshold, dateField, entity } = config;
-
+    isLatestQuery: boolean,
+    fetcher: (filters: any[], pageSize: number, page?: number) => Promise<T[]>,
+    dateField: string = 'createDate',
+  ): Promise<QueryResult<T>> {
     // Get total count
     const totalCount = await this.getCount(client, entity, baseFilters);
 
-    // If count is below threshold, no segmentation needed
-    if (totalCount <= threshold) {
-      this.logger.debug(`Count ${totalCount} is below threshold ${threshold}, no segmentation needed`);
-      const items = await fetcher(baseFilters);
+    // Direct fetch for small result sets (<= 500)
+    if (totalCount <= this.PAGE_SIZE) {
+      this.logger.info(`${entity}: Count ${totalCount} <= ${this.PAGE_SIZE}, fetching directly`);
+      const items = await fetcher(baseFilters, this.PAGE_SIZE);
 
       return {
         items,
         totalCount,
-        segments: [],
-        isSegmented: false,
-        message: `Found ${totalCount} results.`,
+        strategy: 'direct',
+        message: `Found ${items.length} ${entity.toLowerCase()}.`,
       };
     }
 
-    // Generate time segments
-    const segments = this.generateTimeSegments(totalCount, dateField, threshold);
-    const segmentResults: SegmentResult[] = [];
+    // Reverse time-window search for "latest" queries
+    if (isLatestQuery) {
+      this.logger.info(`${entity}: Latest query with ${totalCount} total results, using reverse time-window search`);
+      return await this.executeReverseWindowSearch(client, entity, baseFilters, totalCount, fetcher, dateField);
+    }
 
-    // Try to fetch from the first (most recent) segment
-    let fetchedItems: T[] = [];
-    let fetchedSegment: DateSegment | null = null;
+    // For non-latest queries with large result sets
+    if (totalCount > this.MAX_RESULTS) {
+      this.logger.warn(
+        `${entity}: Count ${totalCount} exceeds max ${this.MAX_RESULTS}. Results need better filtering.`,
+      );
 
-    for (const segment of segments) {
-      // Add date range filter for this segment
-      const segmentFilters = [
+      // Fetch first page only and warn
+      const items = await fetcher(baseFilters, this.PAGE_SIZE, 1);
+
+      return {
+        items,
+        totalCount,
+        strategy: 'paginated',
+        message: `Showing first ${items.length} of ${totalCount} results (page 1 of ${Math.ceil(totalCount / this.PAGE_SIZE)}).`,
+        warning: `Large result set (${totalCount} records). Add date range or other filters to narrow results. Would require ${Math.ceil(totalCount / this.PAGE_SIZE)} pages to fetch all.`,
+      };
+    }
+
+    // Warn if approaching limit
+    if (totalCount > this.WARN_THRESHOLD) {
+      this.logger.warn(
+        `${entity}: Count ${totalCount} exceeds warning threshold ${this.WARN_THRESHOLD}`,
+      );
+    }
+
+    // Standard paginated fetch (up to 10 pages)
+    this.logger.info(`${entity}: Fetching ${totalCount} results via pagination`);
+    return await this.executePaginatedFetch(entity, baseFilters, totalCount, fetcher);
+  }
+
+  /**
+   * Reverse time-window search for "latest" queries
+   *
+   * Searches in expanding time windows (30→90→180→365 days) until results found.
+   * Uses binary search if a window has >2500 results.
+   */
+  private async executeReverseWindowSearch<T extends { id?: number }>(
+    client: AutotaskClient,
+    entity: string,
+    baseFilters: any[],
+    totalCount: number,
+    fetcher: (filters: any[], pageSize: number, page?: number) => Promise<T[]>,
+    dateField: string,
+  ): Promise<QueryResult<T>> {
+    const now = new Date();
+    let windowsSearched = 0;
+
+    // Try each time window, starting with most recent
+    for (const days of this.TIME_WINDOWS) {
+      windowsSearched++;
+
+      const startDate = new Date(now);
+      startDate.setDate(startDate.getDate() - days);
+
+      const windowFilters = [
         ...baseFilters,
         {
+          field: dateField,
           op: 'gte',
-          field: dateField,
-          value: segment.startDate,
-        },
-        {
-          op: 'lte',
-          field: dateField,
-          value: segment.endDate,
+          value: startDate.toISOString(),
         },
       ];
 
-      // Get count for this segment
-      const segmentCount = await this.getCount(client, entity, segmentFilters);
+      const windowCount = await this.getCount(client, entity, windowFilters);
 
-      segmentResults.push({
-        label: segment.label,
-        count: segmentCount,
-        fetched: false,
-      });
+      this.logger.debug(`${entity}: Last ${days} days has ${windowCount} results`);
 
-      // Fetch from first segment with results
-      if (!fetchedSegment && segmentCount > 0) {
-        this.logger.debug(`Fetching results from segment ${segment.label} (${segmentCount} results)`);
-        fetchedItems = await fetcher(segmentFilters);
-        fetchedSegment = segment;
-        segmentResults[segmentResults.length - 1].fetched = true;
+      if (windowCount === 0) {
+        continue; // Try next window
       }
+
+      // If window has manageable results, fetch them
+      if (windowCount <= this.PAGE_SIZE) {
+        this.logger.info(`${entity}: Fetching ${windowCount} results from last ${days} days`);
+        const items = await fetcher(windowFilters, this.PAGE_SIZE);
+
+        return {
+          items,
+          totalCount,
+          strategy: 'reverse-window',
+          message: `Found ${items.length} ${entity.toLowerCase()} from last ${days} days (${totalCount} total in system).`,
+          metadata: {
+            windowsSearched,
+            maxIdSeen: Math.max(...items.map(i => i.id || 0)),
+          },
+        };
+      }
+
+      // Window has >500 results, check if it needs binary search
+      if (windowCount > this.WARN_THRESHOLD) {
+        this.logger.info(
+          `${entity}: Last ${days} days has ${windowCount} results, using binary search`,
+        );
+        return await this.executeBinarySearchInWindow(
+          client,
+          entity,
+          baseFilters,
+          totalCount,
+          fetcher,
+          dateField,
+          startDate,
+          now,
+          windowsSearched,
+        );
+      }
+
+      // Fetch paginated results from this window (up to 2500)
+      this.logger.info(`${entity}: Fetching ${windowCount} results from last ${days} days (paginated)`);
+      const items: T[] = [];
+      const maxPages = Math.ceil(Math.min(windowCount, this.WARN_THRESHOLD) / this.PAGE_SIZE);
+
+      for (let page = 1; page <= maxPages; page++) {
+        const pageItems = await fetcher(windowFilters, this.PAGE_SIZE, page);
+        items.push(...pageItems);
+
+        if (pageItems.length < this.PAGE_SIZE) {
+          break; // No more results
+        }
+      }
+
+      return {
+        items,
+        totalCount,
+        strategy: 'reverse-window',
+        message: `Found ${items.length} ${entity.toLowerCase()} from last ${days} days (${totalCount} total in system).`,
+        metadata: {
+          windowsSearched,
+          maxIdSeen: Math.max(...items.map(i => i.id || 0)),
+        },
+      };
     }
 
-    // Build helpful message
-    const message = fetchedSegment
-      ? `Found ${totalCount} total results. Showing ${fetchedItems.length} from ${fetchedSegment.label}. ` +
-        `Use ${dateField}From/${dateField}To filters for other periods.`
-      : `Found ${totalCount} total results but none in recent segments. Use ${dateField}From/${dateField}To filters to search specific periods.`;
+    // No results found in any time window - fetch from beginning
+    this.logger.info(`${entity}: No results in time windows, fetching from beginning`);
+    const items = await fetcher(baseFilters, this.PAGE_SIZE, 1);
 
     return {
-      items: fetchedItems,
+      items,
       totalCount,
-      segments: segmentResults,
-      isSegmented: true,
-      message,
+      strategy: 'reverse-window',
+      message: `Found ${items.length} ${entity.toLowerCase()} (oldest first, ${totalCount} total).`,
+      warning: 'No results found in recent time windows. Showing oldest records. Use date filters to search specific periods.',
+      metadata: {
+        windowsSearched,
+      },
     };
   }
 
   /**
-   * Check if a query needs segmentation
+   * Binary search within a date range to find manageable segment
    *
-   * @param client - Autotask client
-   * @param entity - Entity type
-   * @param filters - Query filters
-   * @param threshold - Count threshold
-   * @returns Promise<QueryCountResult> - Count and segmentation recommendation
+   * Recursively splits date range until segment has <=500 results
    */
-  async checkSegmentation(
+  private async executeBinarySearchInWindow<T extends { id?: number }>(
     client: AutotaskClient,
     entity: string,
-    filters: any[],
-    threshold: number = this.defaultThreshold,
-  ): Promise<QueryCountResult> {
-    const count = await this.getCount(client, entity, filters);
-    const exceedsThreshold = count > threshold;
+    baseFilters: any[],
+    totalCount: number,
+    fetcher: (filters: any[], pageSize: number, page?: number) => Promise<T[]>,
+    dateField: string,
+    startDate: Date,
+    endDate: Date,
+    windowsSearched: number,
+  ): Promise<QueryResult<T>> {
+    const midDate = new Date((startDate.getTime() + endDate.getTime()) / 2);
 
-    const result: QueryCountResult = {
-      count,
-      exceedsThreshold,
-    };
+    // Check upper half (more recent)
+    const upperFilters = [
+      ...baseFilters,
+      { field: dateField, op: 'gte', value: midDate.toISOString() },
+      { field: dateField, op: 'lte', value: endDate.toISOString() },
+    ];
 
-    if (exceedsThreshold) {
-      result.suggestedSegments = this.generateTimeSegments(count, 'createDate', threshold);
+    const upperCount = await this.getCount(client, entity, upperFilters);
+
+    if (upperCount <= this.PAGE_SIZE && upperCount > 0) {
+      // Found manageable segment in upper half
+      this.logger.info(`${entity}: Binary search found ${upperCount} results in recent segment`);
+      const items = await fetcher(upperFilters, this.PAGE_SIZE);
+
+      return {
+        items,
+        totalCount,
+        strategy: 'binary-search',
+        message: `Found ${items.length} recent ${entity.toLowerCase()} (${totalCount} total in system).`,
+        metadata: {
+          windowsSearched,
+          maxIdSeen: Math.max(...items.map(i => i.id || 0)),
+        },
+      };
     }
 
-    return result;
+    if (upperCount > this.PAGE_SIZE) {
+      // Upper half still too large, recurse
+      return await this.executeBinarySearchInWindow(
+        client,
+        entity,
+        baseFilters,
+        totalCount,
+        fetcher,
+        dateField,
+        midDate,
+        endDate,
+        windowsSearched,
+      );
+    }
+
+    // Check lower half
+    const lowerFilters = [
+      ...baseFilters,
+      { field: dateField, op: 'gte', value: startDate.toISOString() },
+      { field: dateField, op: 'lt', value: midDate.toISOString() },
+    ];
+
+    const lowerCount = await this.getCount(client, entity, lowerFilters);
+
+    if (lowerCount <= this.PAGE_SIZE && lowerCount > 0) {
+      this.logger.info(`${entity}: Binary search found ${lowerCount} results in older segment`);
+      const items = await fetcher(lowerFilters, this.PAGE_SIZE);
+
+      return {
+        items,
+        totalCount,
+        strategy: 'binary-search',
+        message: `Found ${items.length} ${entity.toLowerCase()} (${totalCount} total in system).`,
+        metadata: {
+          windowsSearched,
+          maxIdSeen: Math.max(...items.map(i => i.id || 0)),
+        },
+      };
+    }
+
+    if (lowerCount > this.PAGE_SIZE) {
+      // Lower half still too large, recurse
+      return await this.executeBinarySearchInWindow(
+        client,
+        entity,
+        baseFilters,
+        totalCount,
+        fetcher,
+        dateField,
+        startDate,
+        midDate,
+        windowsSearched,
+      );
+    }
+
+    // Fallback: fetch first page
+    this.logger.warn(`${entity}: Binary search couldn't find manageable segment, fetching first page`);
+    const items = await fetcher(baseFilters, this.PAGE_SIZE, 1);
+
+    return {
+      items,
+      totalCount,
+      strategy: 'binary-search',
+      message: `Showing first ${items.length} of ${totalCount} results.`,
+      warning: 'Could not find manageable time segment. Add more specific filters.',
+    };
+  }
+
+  /**
+   * Standard paginated fetch (up to 10 pages / 5000 results)
+   */
+  private async executePaginatedFetch<T extends { id?: number }>(
+    entity: string,
+    baseFilters: any[],
+    totalCount: number,
+    fetcher: (filters: any[], pageSize: number, page?: number) => Promise<T[]>,
+  ): Promise<QueryResult<T>> {
+    const items: T[] = [];
+    const maxPages = Math.min(Math.ceil(totalCount / this.PAGE_SIZE), 10);
+
+    for (let page = 1; page <= maxPages; page++) {
+      const pageItems = await fetcher(baseFilters, this.PAGE_SIZE, page);
+      items.push(...pageItems);
+
+      this.logger.debug(`${entity}: Fetched page ${page}/${maxPages} (${pageItems.length} items)`);
+
+      if (pageItems.length < this.PAGE_SIZE) {
+        break; // No more results
+      }
+    }
+
+    const message =
+      totalCount <= this.MAX_RESULTS
+        ? `Found ${items.length} ${entity.toLowerCase()}.`
+        : `Showing ${items.length} of ${totalCount} ${entity.toLowerCase()} (limited to ${maxPages} pages).`;
+
+    return {
+      items,
+      totalCount,
+      strategy: 'paginated',
+      message,
+      metadata: {
+        pagesSearched: maxPages,
+        maxIdSeen: Math.max(...items.map(i => i.id || 0)),
+      },
+    };
   }
 }
